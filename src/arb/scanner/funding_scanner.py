@@ -1,0 +1,88 @@
+"""Funding opportunity scanner."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from decimal import Decimal
+from typing import Any
+
+from arb.scanner.cost_model import annualize_rate, estimate_net_rate
+from arb.scanner.filters import filter_opportunities
+
+
+@dataclass(slots=True, frozen=True)
+class FundingOpportunity:
+    exchange: str
+    symbol: str
+    gross_rate: Decimal
+    net_rate: Decimal
+    annualized_net_rate: Decimal
+    spread_bps: Decimal
+    liquidity_usd: Decimal
+
+
+class FundingScanner:
+    """Scan standardized snapshots for positive net funding opportunities."""
+
+    def __init__(
+        self,
+        *,
+        trading_fee_rate: Decimal = Decimal("0"),
+        slippage_rate: Decimal = Decimal("0"),
+        borrow_rate: Decimal = Decimal("0"),
+        transfer_rate: Decimal = Decimal("0"),
+        min_net_rate: Decimal = Decimal("0"),
+        min_liquidity_usd: Decimal = Decimal("0"),
+        whitelist: set[str] | None = None,
+        blacklist: set[str] | None = None,
+    ) -> None:
+        self.trading_fee_rate = trading_fee_rate
+        self.slippage_rate = slippage_rate
+        self.borrow_rate = borrow_rate
+        self.transfer_rate = transfer_rate
+        self.min_net_rate = min_net_rate
+        self.min_liquidity_usd = min_liquidity_usd
+        self.whitelist = whitelist
+        self.blacklist = blacklist
+
+    def scan(self, snapshots: list[dict[str, Any]]) -> list[FundingOpportunity]:
+        candidates: list[FundingOpportunity] = []
+        for snapshot in snapshots:
+            funding = snapshot.get("funding")
+            ticker = snapshot.get("ticker")
+            if not funding or not ticker:
+                continue
+            gross_rate = Decimal(str(funding["rate"]))
+            net_rate = estimate_net_rate(
+                gross_rate,
+                trading_fee_rate=self.trading_fee_rate,
+                slippage_rate=self.slippage_rate,
+                borrow_rate=self.borrow_rate,
+                transfer_rate=self.transfer_rate,
+            )
+            bid = Decimal(str(ticker["bid"]))
+            ask = Decimal(str(ticker["ask"]))
+            mid = (bid + ask) / Decimal("2")
+            spread_bps = ((ask - bid) / mid) * Decimal("10000") if mid else Decimal("0")
+            liquidity_usd = snapshot.get("liquidity_usd")
+            if liquidity_usd is None:
+                liquidity_usd = ask * Decimal(str(snapshot.get("top_ask_size", "0")))
+            opportunity = FundingOpportunity(
+                exchange=str(funding["exchange"]),
+                symbol=str(funding["symbol"]),
+                gross_rate=gross_rate,
+                net_rate=net_rate,
+                annualized_net_rate=annualize_rate(net_rate),
+                spread_bps=spread_bps,
+                liquidity_usd=Decimal(str(liquidity_usd)),
+            )
+            candidates.append(opportunity)
+
+        filtered = filter_opportunities(
+            candidates,
+            min_net_rate=self.min_net_rate,
+            min_liquidity_usd=self.min_liquidity_usd,
+            whitelist=self.whitelist,
+            blacklist=self.blacklist,
+        )
+        return sorted(filtered, key=lambda item: item.annualized_net_rate, reverse=True)
