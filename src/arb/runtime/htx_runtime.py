@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from arb.exchange.htx import HtxExchange
-from arb.market.collector import MarketDataCollector
 from arb.models import MarketType
 from arb.net.http import HttpTransport
-from arb.net.ws import WebSocketSession
+from arb.runtime.snapshots import SnapshotService
+from arb.runtime.streaming import PublicStreamService
 from arb.ws.htx import HtxWebSocketClient
 
 
@@ -20,14 +20,18 @@ class HtxRuntime:
         exchange: HtxExchange,
         ws_client: HtxWebSocketClient,
         http_transport: HttpTransport,
+        snapshot_service: SnapshotService,
+        public_stream: PublicStreamService,
         *,
         ws_connector: Any,
     ) -> None:
         self.exchange = exchange
         self.ws_client = ws_client
         self.http_transport = http_transport
+        self.snapshot_service = snapshot_service
+        self.public_stream = public_stream
         self.ws_connector = ws_connector
-        self.collector = MarketDataCollector({"htx": exchange})
+        self.collector = snapshot_service.collector
 
     @classmethod
     def build(
@@ -47,7 +51,20 @@ class HtxRuntime:
             transport=http_transport.request,
         )
         ws_client = HtxWebSocketClient(market_type)
-        return cls(exchange, ws_client, http_transport, ws_connector=ws_connector)
+        snapshot_service = SnapshotService("htx", exchange)
+        public_stream = PublicStreamService(
+            ws_client,
+            snapshot_service,
+            ws_connector=ws_connector,
+        )
+        return cls(
+            exchange,
+            ws_client,
+            http_transport,
+            snapshot_service,
+            public_stream,
+            ws_connector=ws_connector,
+        )
 
     async def public_ping(self) -> bool:
         await self.http_transport.request(
@@ -60,32 +77,10 @@ class HtxRuntime:
         return {key: str(value) for key, value in balances.items()}
 
     async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> dict[str, Any]:
-        return await self.collector.collect_snapshot("htx", symbol, market_type)
+        return await self.snapshot_service.fetch_public_snapshot(symbol, market_type)
 
     async def stream_orderbook(self, symbol: str, *, max_messages: int = 1) -> list[dict[str, Any]]:
-        return await self._stream_public("depth", symbol, max_messages=max_messages)
+        return await self.public_stream.stream("depth", symbol=symbol, max_messages=max_messages)
 
     async def stream_ticker(self, symbol: str, *, max_messages: int = 1) -> list[dict[str, Any]]:
-        return await self._stream_public("ticker", symbol, max_messages=max_messages)
-
-    async def _stream_public(
-        self,
-        channel: str,
-        symbol: str,
-        *,
-        max_messages: int,
-    ) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
-
-        async def on_message(message: Any) -> None:
-            normalized = await self.collector.ingest_ws_message(self.ws_client, message)
-            events.extend(normalized)
-
-        session = WebSocketSession(
-            self.ws_client.endpoint,
-            connector=self.ws_connector,
-            on_message=on_message,
-        )
-        session.add_subscription(self.ws_client.build_subscribe_message(channel, symbol=symbol))
-        await session.run_forever(max_messages=max_messages)
-        return events
+        return await self.public_stream.stream("ticker", symbol=symbol, max_messages=max_messages)

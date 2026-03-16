@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from arb.exchange.gate import GateExchange
-from arb.market.collector import MarketDataCollector
 from arb.models import MarketType
 from arb.net.http import HttpTransport
-from arb.net.ws import WebSocketSession
+from arb.runtime.snapshots import SnapshotService
+from arb.runtime.streaming import PublicStreamService
 from arb.ws.gate import GateWebSocketClient
 
 
@@ -20,14 +20,18 @@ class GateRuntime:
         exchange: GateExchange,
         ws_client: GateWebSocketClient,
         http_transport: HttpTransport,
+        snapshot_service: SnapshotService,
+        orderbook_stream: PublicStreamService,
         *,
         ws_connector: Any,
     ) -> None:
         self.exchange = exchange
         self.ws_client = ws_client
         self.http_transport = http_transport
+        self.snapshot_service = snapshot_service
+        self.orderbook_stream = orderbook_stream
         self.ws_connector = ws_connector
-        self.collector = MarketDataCollector({"gate": exchange})
+        self.collector = snapshot_service.collector
 
     @classmethod
     def build(
@@ -46,7 +50,20 @@ class GateRuntime:
             transport=http_transport.request,
         )
         ws_client = GateWebSocketClient()
-        return cls(exchange, ws_client, http_transport, ws_connector=ws_connector)
+        snapshot_service = SnapshotService("gate", exchange)
+        orderbook_stream = PublicStreamService(
+            ws_client,
+            snapshot_service,
+            ws_connector=ws_connector,
+        )
+        return cls(
+            exchange,
+            ws_client,
+            http_transport,
+            snapshot_service,
+            orderbook_stream,
+            ws_connector=ws_connector,
+        )
 
     async def public_ping(self) -> bool:
         await self.http_transport.request(
@@ -59,22 +76,11 @@ class GateRuntime:
         return {key: str(value) for key, value in balances.items()}
 
     async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> dict[str, Any]:
-        return await self.collector.collect_snapshot("gate", symbol, market_type)
+        return await self.snapshot_service.fetch_public_snapshot(symbol, market_type)
 
     async def stream_orderbook(self, symbol: str, *, max_messages: int = 1) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
-
-        async def on_message(message: Any) -> None:
-            normalized = await self.collector.ingest_ws_message(self.ws_client, message)
-            events.extend(normalized)
-
-        session = WebSocketSession(
-            self.ws_client.endpoint,
-            connector=self.ws_connector,
-            on_message=on_message,
+        return await self.orderbook_stream.stream(
+            "spot.order_book",
+            symbol=symbol,
+            max_messages=max_messages,
         )
-        session.add_subscription(
-            self.ws_client.build_subscribe_message("spot.order_book", symbol=symbol)
-        )
-        await session.run_forever(max_messages=max_messages)
-        return events

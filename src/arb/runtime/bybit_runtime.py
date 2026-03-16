@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from arb.exchange.bybit import BybitExchange
-from arb.market.collector import MarketDataCollector
 from arb.models import MarketType
 from arb.net.http import HttpTransport
-from arb.net.ws import WebSocketSession
+from arb.runtime.snapshots import SnapshotService
+from arb.runtime.streaming import PrivateSessionService, PublicStreamService
 from arb.ws.bybit import BybitWebSocketClient
 
 
@@ -21,6 +21,9 @@ class BybitRuntime:
         public_ws_client: BybitWebSocketClient,
         private_ws_client: BybitWebSocketClient,
         http_transport: HttpTransport,
+        snapshot_service: SnapshotService,
+        public_stream: PublicStreamService,
+        private_session: PrivateSessionService,
         *,
         ws_connector: Any,
     ) -> None:
@@ -28,8 +31,11 @@ class BybitRuntime:
         self.public_ws_client = public_ws_client
         self.private_ws_client = private_ws_client
         self.http_transport = http_transport
+        self.snapshot_service = snapshot_service
+        self.public_stream = public_stream
+        self.private_session = private_session
         self.ws_connector = ws_connector
-        self.collector = MarketDataCollector({"bybit": exchange})
+        self.collector = snapshot_service.collector
 
     @classmethod
     def build(
@@ -55,11 +61,24 @@ class BybitRuntime:
             api_secret=api_secret,
             private=True,
         )
+        snapshot_service = SnapshotService("bybit", exchange)
+        public_stream = PublicStreamService(
+            public_ws_client,
+            snapshot_service,
+            ws_connector=ws_connector,
+        )
+        private_session = PrivateSessionService(
+            private_ws_client.endpoint,
+            ws_connector=ws_connector,
+        )
         return cls(
             exchange,
             public_ws_client,
             private_ws_client,
             http_transport,
+            snapshot_service,
+            public_stream,
+            private_session,
             ws_connector=ws_connector,
         )
 
@@ -74,45 +93,19 @@ class BybitRuntime:
         return {key: str(value) for key, value in balances.items()}
 
     async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> dict[str, Any]:
-        return await self.collector.collect_snapshot("bybit", symbol, market_type)
+        return await self.snapshot_service.fetch_public_snapshot(symbol, market_type)
 
     def build_private_auth_message(self, expires: int) -> dict[str, Any]:
         return dict(self.private_ws_client.build_auth_message(expires))
 
     async def stream_orderbook(self, symbol: str, *, max_messages: int = 1) -> list[dict[str, Any]]:
-        return await self._stream_public("orderbook", symbol, max_messages=max_messages)
+        return await self.public_stream.stream("orderbook", symbol=symbol, max_messages=max_messages)
 
     async def stream_ticker(self, symbol: str, *, max_messages: int = 1) -> list[dict[str, Any]]:
-        return await self._stream_public("ticker", symbol, max_messages=max_messages)
+        return await self.public_stream.stream("ticker", symbol=symbol, max_messages=max_messages)
 
     async def auth_private_ws(self, expires: int, *, max_messages: int = 1) -> list[Any]:
-        session = WebSocketSession(
-            self.private_ws_client.endpoint,
-            connector=self.ws_connector,
+        return await self.private_session.run(
+            self.private_ws_client.build_auth_message(expires),
+            max_messages=max_messages,
         )
-        session.add_subscription(self.private_ws_client.build_auth_message(expires))
-        return await session.run_forever(max_messages=max_messages)
-
-    async def _stream_public(
-        self,
-        channel: str,
-        symbol: str,
-        *,
-        max_messages: int,
-    ) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
-
-        async def on_message(message: Any) -> None:
-            normalized = await self.collector.ingest_ws_message(self.public_ws_client, message)
-            events.extend(normalized)
-
-        session = WebSocketSession(
-            self.public_ws_client.endpoint,
-            connector=self.ws_connector,
-            on_message=on_message,
-        )
-        session.add_subscription(
-            self.public_ws_client.build_subscribe_message(channel, symbol=symbol)
-        )
-        await session.run_forever(max_messages=max_messages)
-        return events
