@@ -5,5 +5,12 @@ description = "CEX funding rate arbitrage toolkit"
 requires-python = ">=3.12"
 dependencies = []
 
-[tool.unittest]
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+]
+
+[tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"

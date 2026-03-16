@@ -1,14 +1,12 @@
 from __future__ import annotations
-
+import pytest
 import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import sys
 from pathlib import Path
-import unittest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
-
+pytestmark = pytest.mark.asyncio
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
 from arb.models import MarketType
 from arb.monitoring.alerts import AlertManager
 from arb.monitoring.health import HealthChecker
@@ -18,32 +16,12 @@ from arb.runtime.pipeline import OpportunityPipeline
 from arb.runtime.realtime_scanner import RealtimeScanner
 from arb.scanner.funding_scanner import FundingScanner
 
-
-def _snapshot(exchange: str, symbol: str, rate: str = "0.0005") -> dict[str, object]:
+def _snapshot(exchange: str, symbol: str, rate: str='0.0005') -> dict[str, object]:
     ts = datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat()
-    return {
-        "ticker": {
-            "exchange": exchange,
-            "symbol": symbol,
-            "market_type": "perpetual",
-            "bid": "100.0",
-            "ask": "101.0",
-            "last": "100.5",
-            "ts": ts,
-        },
-        "funding": {
-            "exchange": exchange,
-            "symbol": symbol,
-            "rate": rate,
-            "predicted_rate": rate,
-            "next_funding_time": (datetime(2026, 1, 1, 8, tzinfo=timezone.utc)).isoformat(),
-            "ts": ts,
-        },
-        "top_ask_size": "12",
-    }
-
+    return {'ticker': {'exchange': exchange, 'symbol': symbol, 'market_type': 'perpetual', 'bid': '100.0', 'ask': '101.0', 'last': '100.5', 'ts': ts}, 'funding': {'exchange': exchange, 'symbol': symbol, 'rate': rate, 'predicted_rate': rate, 'next_funding_time': datetime(2026, 1, 1, 8, tzinfo=timezone.utc).isoformat(), 'ts': ts}, 'top_ask_size': '12'}
 
 class _BarrierRuntime:
+
     def __init__(self, name: str, start_event: asyncio.Event, other_event: asyncio.Event) -> None:
         self.name = name
         self.start_event = start_event
@@ -57,8 +35,8 @@ class _BarrierRuntime:
         await asyncio.wait_for(self.other_event.wait(), timeout=0.2)
         return _snapshot(self.name, symbol)
 
-
 class _FlakyRuntime:
+
     def __init__(self) -> None:
         self.calls = 0
 
@@ -68,19 +46,19 @@ class _FlakyRuntime:
     async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> dict[str, object]:
         self.calls += 1
         if self.calls == 1:
-            raise RuntimeError("temporary disconnect")
-        return _snapshot("binance", symbol)
-
+            raise RuntimeError('temporary disconnect')
+        return _snapshot('binance', symbol)
 
 class _StaticRuntime:
+
     async def public_ping(self) -> bool:
         return True
 
     async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> dict[str, object]:
-        return _snapshot("binance", symbol)
-
+        return _snapshot('binance', symbol)
 
 class _MemoryRepository:
+
     def __init__(self) -> None:
         self.tickers = []
         self.funding = []
@@ -91,80 +69,39 @@ class _MemoryRepository:
     def save_funding(self, funding) -> None:
         self.funding.append(funding)
 
+class TestRealtimeScanner:
 
-class RealtimeScannerTests(unittest.IsolatedAsyncioTestCase):
     async def test_manager_collects_snapshots_in_parallel(self) -> None:
         first_started = asyncio.Event()
         second_started = asyncio.Event()
-        manager = LiveExchangeManager(
-            {
-                "binance": _BarrierRuntime("binance", first_started, second_started),
-                "okx": _BarrierRuntime("okx", second_started, first_started),
-            },
-            health_checker=HealthChecker(),
-        )
-
-        snapshots = await manager.collect_snapshots(
-            [
-                ScanTarget("binance", "BTC/USDT", MarketType.PERPETUAL),
-                ScanTarget("okx", "ETH/USDT", MarketType.PERPETUAL),
-            ]
-        )
-        self.assertEqual(len(snapshots), 2)
-        self.assertEqual({item["ticker"]["exchange"] for item in snapshots}, {"binance", "okx"})
+        manager = LiveExchangeManager({'binance': _BarrierRuntime('binance', first_started, second_started), 'okx': _BarrierRuntime('okx', second_started, first_started)}, health_checker=HealthChecker())
+        snapshots = await manager.collect_snapshots([ScanTarget('binance', 'BTC/USDT', MarketType.PERPETUAL), ScanTarget('okx', 'ETH/USDT', MarketType.PERPETUAL)])
+        assert len(snapshots) == 2
+        assert {item['ticker']['exchange'] for item in snapshots} == {'binance', 'okx'}
 
     async def test_scanner_recovers_after_runtime_error(self) -> None:
         alerts = []
         alert_manager = AlertManager(alerts.append)
-        manager = LiveExchangeManager(
-            {"binance": _FlakyRuntime()},
-            alert_manager=alert_manager,
-            health_checker=HealthChecker(max_staleness=timedelta(seconds=1)),
-        )
+        manager = LiveExchangeManager({'binance': _FlakyRuntime()}, alert_manager=alert_manager, health_checker=HealthChecker(max_staleness=timedelta(seconds=1)))
         repository = _MemoryRepository()
-        pipeline = OpportunityPipeline(
-            repository=repository,
-            metrics=MetricsRegistry(),
-            publisher=lambda message: None,
-        )
-        scanner = RealtimeScanner(
-            manager,
-            FundingScanner(min_net_rate=Decimal("0.0001")),
-            pipeline,
-            interval=0,
-        )
-        results = await scanner.run(
-            [ScanTarget("binance", "BTC/USDT", MarketType.PERPETUAL)],
-            iterations=2,
-            dry_run=True,
-        )
-        self.assertEqual(len(alerts), 1)
-        self.assertIn("temporary disconnect", alerts[0].message)
-        self.assertEqual(len(results[1]["opportunities"]), 1)
-        self.assertEqual(len(repository.tickers), 1)
-        self.assertEqual(len(repository.funding), 1)
+        pipeline = OpportunityPipeline(repository=repository, metrics=MetricsRegistry(), publisher=lambda message: None)
+        scanner = RealtimeScanner(manager, FundingScanner(min_net_rate=Decimal('0.0001')), pipeline, interval=0)
+        results = await scanner.run([ScanTarget('binance', 'BTC/USDT', MarketType.PERPETUAL)], iterations=2, dry_run=True)
+        assert len(alerts) == 1
+        assert 'temporary disconnect' in alerts[0].message
+        assert len(results[1]['opportunities']) == 1
+        assert len(repository.tickers) == 1
+        assert len(repository.funding) == 1
 
     async def test_pipeline_formats_dry_run_output(self) -> None:
         repository = _MemoryRepository()
         messages = []
-        pipeline = OpportunityPipeline(
-            repository=repository,
-            metrics=MetricsRegistry(),
-            publisher=messages.append,
-        )
-        scanner = FundingScanner(min_net_rate=Decimal("0.0001"))
-        manager = LiveExchangeManager({"binance": _StaticRuntime()})
+        pipeline = OpportunityPipeline(repository=repository, metrics=MetricsRegistry(), publisher=messages.append)
+        scanner = FundingScanner(min_net_rate=Decimal('0.0001'))
+        manager = LiveExchangeManager({'binance': _StaticRuntime()})
         realtime = RealtimeScanner(manager, scanner, pipeline, interval=0)
-
-        result = await realtime.scan_once(
-            [ScanTarget("binance", "BTC/USDT", MarketType.PERPETUAL)],
-            dry_run=True,
-        )
-        self.assertTrue(result["output"][0].startswith("DRY-RUN "))
-        self.assertEqual(len(messages), 1)
-        self.assertEqual(repository.tickers[0].exchange, "binance")
-        self.assertEqual(repository.funding[0].symbol, "BTC/USDT")
-
-
-if __name__ == "__main__":
-    unittest.main()
+        result = await realtime.scan_once([ScanTarget('binance', 'BTC/USDT', MarketType.PERPETUAL)], dry_run=True)
+        assert result['output'][0].startswith('DRY-RUN ')
+        assert len(messages) == 1
+        assert repository.tickers[0].exchange == 'binance'
+        assert repository.funding[0].symbol == 'BTC/USDT'
