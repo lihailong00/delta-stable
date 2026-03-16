@@ -9,14 +9,11 @@ from arb.models import MarketType
 
 
 @runtime_checkable
-class LiveRuntimeProtocol(Protocol):
-    """Common surface area expected by orchestration and smoke layers."""
+class SnapshotRuntimeProtocol(Protocol):
+    """Runtime surface area required by realtime snapshot orchestration."""
 
     async def public_ping(self) -> bool:
         """Validate that the exchange public API is reachable."""
-
-    async def validate_private_access(self) -> dict[str, Any]:
-        """Validate that private API credentials can read account state."""
 
     async def fetch_public_snapshot(
         self,
@@ -24,6 +21,22 @@ class LiveRuntimeProtocol(Protocol):
         market_type: MarketType,
     ) -> dict[str, Any]:
         """Fetch a normalized market snapshot for a symbol."""
+
+
+@runtime_checkable
+class SmokeRuntimeProtocol(Protocol):
+    """Runtime surface area required by smoke and private credential checks."""
+
+    async def public_ping(self) -> bool:
+        """Validate that the exchange public API is reachable."""
+
+    async def validate_private_access(self) -> dict[str, Any]:
+        """Validate that private API credentials can read account state."""
+
+
+@runtime_checkable
+class LiveRuntimeProtocol(SnapshotRuntimeProtocol, SmokeRuntimeProtocol, Protocol):
+    """Full runtime surface area used by both orchestration and smoke layers."""
 
 
 @runtime_checkable

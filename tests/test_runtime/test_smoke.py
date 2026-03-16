@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 pytestmark = pytest.mark.asyncio
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
+from arb.runtime.protocols import SmokeRuntimeProtocol
 from arb.runtime.smoke import SmokeRunner
 
 class _HealthyRuntime:
@@ -31,6 +32,10 @@ class _BrokenPublicRuntime:
         return {}
 
 class TestSmokeRunner:
+
+    async def test_runtime_protocol_compatibility_for_smoke(self) -> None:
+        assert isinstance(_HealthyRuntime(), SmokeRuntimeProtocol)
+        assert isinstance(_BrokenPrivateRuntime(), SmokeRuntimeProtocol)
 
     async def test_public_smoke(self) -> None:
         runner = SmokeRunner({'binance': _HealthyRuntime(), 'gate': _BrokenPublicRuntime()})

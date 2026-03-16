@@ -8,7 +8,13 @@ from .gate_runtime import GateRuntime
 from .htx_runtime import HtxRuntime
 from .okx_runtime import OkxRuntime
 from .pipeline import OpportunityPipeline
-from .protocols import LiveRuntimeProtocol, PrivateWsMessageBuilder, SubscribableWsClient
+from .protocols import (
+    LiveRuntimeProtocol,
+    PrivateWsMessageBuilder,
+    SmokeRuntimeProtocol,
+    SnapshotRuntimeProtocol,
+    SubscribableWsClient,
+)
 from .realtime_scanner import RealtimeScanner
 from .snapshots import SnapshotService
 from .smoke import SmokeResult, SmokeRunner
@@ -29,6 +35,8 @@ __all__ = [
     "PublicStreamService",
     "RealtimeScanner",
     "ScanTarget",
+    "SmokeRuntimeProtocol",
+    "SnapshotRuntimeProtocol",
     "SnapshotService",
     "SmokeResult",
     "SmokeRunner",

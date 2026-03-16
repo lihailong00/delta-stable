@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+
+from arb.runtime.protocols import SmokeRuntimeProtocol
 
 
 @dataclass(slots=True, frozen=True)
@@ -18,7 +20,7 @@ class SmokeResult:
 class SmokeRunner:
     """Run public/private readiness checks against live runtimes."""
 
-    def __init__(self, runtimes: dict[str, Any]) -> None:
+    def __init__(self, runtimes: Mapping[str, SmokeRuntimeProtocol]) -> None:
         self.runtimes = dict(runtimes)
 
     async def run_exchange(self, exchange: str, *, private: bool = False) -> SmokeResult:

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
 
-from arb.market.collector import MarketDataCollector
 from arb.models import MarketType
 from arb.monitoring.alerts import Alert, AlertManager
 from arb.monitoring.health import HealthChecker
+from arb.runtime.protocols import SnapshotRuntimeProtocol
 
 
 @dataclass(slots=True, frozen=True)
@@ -24,7 +24,7 @@ class LiveExchangeManager:
 
     def __init__(
         self,
-        runtimes: dict[str, Any],
+        runtimes: Mapping[str, SnapshotRuntimeProtocol],
         *,
         health_checker: HealthChecker | None = None,
         alert_manager: AlertManager | None = None,
@@ -34,7 +34,10 @@ class LiveExchangeManager:
         self.alert_manager = alert_manager
 
     async def ping_all(self) -> dict[str, bool]:
-        async def ping_one(exchange: str, runtime: Any) -> tuple[str, bool]:
+        async def ping_one(
+            exchange: str,
+            runtime: SnapshotRuntimeProtocol,
+        ) -> tuple[str, bool]:
             try:
                 return exchange, bool(await runtime.public_ping())
             except Exception:

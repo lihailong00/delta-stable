@@ -13,6 +13,7 @@ from arb.monitoring.health import HealthChecker
 from arb.monitoring.metrics import MetricsRegistry
 from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
 from arb.runtime.pipeline import OpportunityPipeline
+from arb.runtime.protocols import SnapshotRuntimeProtocol
 from arb.runtime.realtime_scanner import RealtimeScanner
 from arb.scanner.funding_scanner import FundingScanner
 
@@ -70,6 +71,10 @@ class _MemoryRepository:
         self.funding.append(funding)
 
 class TestRealtimeScanner:
+
+    async def test_runtime_protocol_compatibility_for_manager(self) -> None:
+        assert isinstance(_StaticRuntime(), SnapshotRuntimeProtocol)
+        assert isinstance(_FlakyRuntime(), SnapshotRuntimeProtocol)
 
     async def test_manager_collects_snapshots_in_parallel(self) -> None:
         first_started = asyncio.Event()
