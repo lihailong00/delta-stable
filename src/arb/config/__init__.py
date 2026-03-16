@@ -41,3 +41,6 @@ def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
     """Load application configuration from environment variables."""
 
     return AppConfig.from_env(env)
+
+
+__all__ = ["AppConfig", "load_config"]

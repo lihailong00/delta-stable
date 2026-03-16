@@ -13,9 +13,11 @@ class ImportSmokeTests(unittest.TestCase):
         for module_name in (
             "arb",
             "arb.config",
+            "arb.config.live",
             "arb.logging",
             "arb.models",
             "arb.errors",
+            "arb.safety.runtime",
         ):
             with self.subTest(module_name=module_name):
                 module = importlib.import_module(module_name)

@@ -8,7 +8,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from arb.cli import build_parser, main
-from arb.settings.exchanges import ExchangeAccountConfig, ExchangeSettings
+from arb.settings.exchanges import ExchangeAccountConfig, ExchangeEndpointConfig, ExchangeSettings
 from arb.settings.strategies import StrategyConfig, StrategySettings
 
 
@@ -30,6 +30,10 @@ class CliTests(unittest.TestCase):
                     name="binance",
                     api_key_env="BINANCE_KEY",
                     api_secret_env="BINANCE_SECRET",
+                    endpoints=ExchangeEndpointConfig(
+                        rest_base_url="https://api.binance.com",
+                        ws_public_url="wss://stream.binance.com/ws",
+                    ),
                 )
             }
         )
