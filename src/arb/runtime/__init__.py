@@ -9,6 +9,7 @@ from .htx_runtime import HtxRuntime
 from .okx_runtime import OkxRuntime
 from .pipeline import OpportunityPipeline
 from .realtime_scanner import RealtimeScanner
+from .smoke import SmokeResult, SmokeRunner
 
 __all__ = [
     "BinanceRuntime",
@@ -21,4 +22,6 @@ __all__ = [
     "OpportunityPipeline",
     "RealtimeScanner",
     "ScanTarget",
+    "SmokeResult",
+    "SmokeRunner",
 ]

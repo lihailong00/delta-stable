@@ -45,6 +45,35 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result["command"], "scan")
         self.assertEqual(result["args"]["exchange"], "binance")
 
+    def test_cli_parses_live_scan_arguments(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "live-scan",
+                "--exchange",
+                "binance",
+                "okx",
+                "--symbol",
+                "BTC/USDT",
+                "ETH/USDT",
+                "--dry-run",
+                "--iterations",
+                "3",
+            ]
+        )
+        self.assertEqual(args.command, "live-scan")
+        self.assertTrue(args.dry_run)
+        self.assertEqual(args.iterations, 3)
+
+    def test_cli_parses_smoke_arguments_and_dispatches_handler(self) -> None:
+        result = main(
+            ["smoke", "--exchange", "binance", "okx", "--private"],
+            handlers={"smoke": lambda args: {"command": args.command, "private": args.private, "exchange": args.exchange}},
+        )
+        self.assertEqual(result["command"], "smoke")
+        self.assertTrue(result["private"])
+        self.assertEqual(result["exchange"], ["binance", "okx"])
+
 
 if __name__ == "__main__":
     unittest.main()
