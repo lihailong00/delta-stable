@@ -5,11 +5,12 @@ from __future__ import annotations
 import time
 from collections.abc import Mapping
 from decimal import Decimal
-from typing import Any
 
 from arb.models import MarketType
 from arb.utils.symbols import normalize_symbol, split_symbol
 from arb.ws.base import BaseWebSocketClient, WsEvent
+from arb.schemas.base import SerializableValue
+from arb.ws.schemas import HtxActionMessage, HtxSubscribeMessage, OrderBookUpdatePayload, OrderUpdatePayload, PositionUpdatePayload, TickerUpdatePayload
 
 
 class HtxWebSocketClient(BaseWebSocketClient):
@@ -39,12 +40,12 @@ class HtxWebSocketClient(BaseWebSocketClient):
         *,
         symbol: str | None = None,
         market: str | None = None,
-    ) -> Mapping[str, Any]:
+    ) -> HtxSubscribeMessage | HtxActionMessage:
         if self.private and channel in {"orders", "positions"}:
             if symbol is None:
-                return {"action": "sub", "ch": channel}
+                return HtxActionMessage(action="sub", ch=channel)
             suffix = self.to_exchange_symbol(symbol)
-            return {"action": "sub", "ch": f"{channel}#{suffix}"}
+            return HtxActionMessage(action="sub", ch=f"{channel}#{suffix}")
         if symbol is None:
             raise ValueError("symbol is required for HTX subscriptions")
         if channel == "depth":
@@ -53,18 +54,21 @@ class HtxWebSocketClient(BaseWebSocketClient):
             suffix = "detail.merged"
         else:
             raise ValueError(f"unsupported HTX channel: {channel}")
-        return {"sub": f"market.{self.to_exchange_symbol(symbol)}.{suffix}", "id": str(int(time.time() * 1000))}
+        return HtxSubscribeMessage(
+            sub=f"market.{self.to_exchange_symbol(symbol)}.{suffix}",
+            id=str(int(time.time() * 1000)),
+        )
 
-    def build_auth_message(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
-        return {"action": "req", "ch": "auth", "params": dict(params)}
+    def build_auth_message(self, params: Mapping[str, SerializableValue]) -> HtxActionMessage:
+        return HtxActionMessage(action="req", ch="auth", params=dict(params))
 
-    def build_ping_message(self) -> Mapping[str, Any]:
-        return {"action": "ping", "data": {"ts": int(time.time() * 1000)}}
+    def build_ping_message(self) -> HtxActionMessage:
+        return HtxActionMessage(action="ping", ch="heartbeat", data={"ts": int(time.time() * 1000)})
 
-    def is_pong_message(self, message: Mapping[str, Any]) -> bool:
+    def is_pong_message(self, message: Mapping[str, object]) -> bool:
         return "pong" in message or message.get("action") == "pong"
 
-    def parse_message(self, message: Mapping[str, Any]) -> list[WsEvent]:
+    def parse_message(self, message: Mapping[str, object]) -> list[WsEvent]:
         if "ping" in message:
             return []
         if message.get("action") in {"req", "sub"} or message.get("status") == "ok":
@@ -86,22 +90,22 @@ class HtxWebSocketClient(BaseWebSocketClient):
             return f"{base}-{quote}"
         return f"{base}{quote}".lower()
 
-    def _parse_depth(self, message: Mapping[str, Any]) -> WsEvent:
+    def _parse_depth(self, message: Mapping[str, object]) -> WsEvent:
         tick = message["tick"]
         channel = str(message["ch"])
         symbol = normalize_symbol(channel.split(".")[1])
         return WsEvent(
             exchange=self.exchange,
             channel="orderbook.update",
-            payload={
-                "symbol": symbol,
-                "bids": tuple((Decimal(str(level[0])), Decimal(str(level[1]))) for level in tick.get("bids", [])),
-                "asks": tuple((Decimal(str(level[0])), Decimal(str(level[1]))) for level in tick.get("asks", [])),
-                "ts": tick.get("ts"),
-            },
+            payload=OrderBookUpdatePayload(
+                symbol=symbol,
+                bids=tuple((Decimal(str(level[0])), Decimal(str(level[1]))) for level in tick.get("bids", [])),
+                asks=tuple((Decimal(str(level[0])), Decimal(str(level[1]))) for level in tick.get("asks", [])),
+                ts=int(tick["ts"]) if tick.get("ts") is not None else None,
+            ),
         )
 
-    def _parse_ticker(self, message: Mapping[str, Any]) -> WsEvent:
+    def _parse_ticker(self, message: Mapping[str, object]) -> WsEvent:
         tick = message["tick"]
         channel = str(message["ch"])
         symbol = normalize_symbol(channel.split(".")[1])
@@ -110,15 +114,15 @@ class HtxWebSocketClient(BaseWebSocketClient):
         return WsEvent(
             exchange=self.exchange,
             channel="ticker.update",
-            payload={
-                "symbol": symbol,
-                "bid": Decimal(str(bid)),
-                "ask": Decimal(str(ask)),
-                "last": Decimal(str(tick.get("close", bid))),
-            },
+            payload=TickerUpdatePayload(
+                symbol=symbol,
+                bid=Decimal(str(bid)),
+                ask=Decimal(str(ask)),
+                last=Decimal(str(tick.get("close", bid))),
+            ),
         )
 
-    def _parse_private_orders(self, message: Mapping[str, Any]) -> list[WsEvent]:
+    def _parse_private_orders(self, message: Mapping[str, object]) -> list[WsEvent]:
         data = message.get("data", {})
         items = data if isinstance(data, list) else [data]
         events: list[WsEvent] = []
@@ -127,20 +131,20 @@ class HtxWebSocketClient(BaseWebSocketClient):
                 WsEvent(
                     exchange=self.exchange,
                     channel="order.update",
-                    payload={
-                        "symbol": normalize_symbol(str(item.get("symbol", item.get("contract_code", "")))),
-                        "order_id": str(item.get("order_id", item.get("orderId", ""))),
-                        "side": str(item.get("order_side", item.get("direction", "buy"))).lower(),
-                        "status": str(item.get("order_status", item.get("status", "submitted"))).lower(),
-                        "quantity": Decimal(str(item.get("order_size", item.get("volume", "0")))),
-                        "filled_quantity": Decimal(str(item.get("trade_volume", item.get("filled_amount", "0")))),
-                        "price": Decimal(str(item["price"])) if item.get("price") not in (None, "", "0") else None,
-                    },
+                    payload=OrderUpdatePayload(
+                        symbol=normalize_symbol(str(item.get("symbol", item.get("contract_code", "")))),
+                        order_id=str(item.get("order_id", item.get("orderId", ""))),
+                        side=str(item.get("order_side", item.get("direction", "buy"))).lower(),
+                        status=str(item.get("order_status", item.get("status", "submitted"))).lower(),
+                        quantity=Decimal(str(item.get("order_size", item.get("volume", "0")))),
+                        filled_quantity=Decimal(str(item.get("trade_volume", item.get("filled_amount", "0")))),
+                        price=Decimal(str(item["price"])) if item.get("price") not in (None, "", "0") else None,
+                    ),
                 )
             )
         return events
 
-    def _parse_private_positions(self, message: Mapping[str, Any]) -> list[WsEvent]:
+    def _parse_private_positions(self, message: Mapping[str, object]) -> list[WsEvent]:
         data = message.get("data", {})
         items = data if isinstance(data, list) else [data]
         events: list[WsEvent] = []
@@ -152,14 +156,14 @@ class HtxWebSocketClient(BaseWebSocketClient):
                 WsEvent(
                     exchange=self.exchange,
                     channel="position.update",
-                    payload={
-                        "symbol": normalize_symbol(str(item.get("contract_code", item.get("symbol", "")))),
-                        "direction": str(item.get("direction", "buy")).lower(),
-                        "quantity": abs(quantity),
-                        "entry_price": Decimal(str(item.get("cost_open", item.get("open_price_avg", "0")))),
-                        "mark_price": Decimal(str(item.get("last_price", item.get("mark_price", "0")))),
-                        "unrealized_pnl": Decimal(str(item.get("profit_unreal", "0"))),
-                    },
+                    payload=PositionUpdatePayload(
+                        symbol=normalize_symbol(str(item.get("contract_code", item.get("symbol", "")))),
+                        direction=str(item.get("direction", "buy")).lower(),
+                        quantity=abs(quantity),
+                        entry_price=Decimal(str(item.get("cost_open", item.get("open_price_avg", "0")))),
+                        mark_price=Decimal(str(item.get("last_price", item.get("mark_price", "0")))),
+                        unrealized_pnl=Decimal(str(item.get("profit_unreal", "0"))),
+                    ),
                 )
             )
         return events

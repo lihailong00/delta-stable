@@ -9,17 +9,19 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
 from urllib.parse import urlencode
 
 from arb.exchange.base import BaseExchangeClient
 from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Position, PositionDirection, Side, Ticker
+from arb.net.schemas import HttpRequest, JsonValue
+from arb.schemas.base import SerializableValue
 from arb.utils.symbols import exchange_symbol, normalize_symbol
+from arb.ws.schemas import OpArgsMessage
 
-RestTransport = Callable[[dict[str, Any]], Awaitable[Any]]
+RestTransport = Callable[[HttpRequest], Awaitable[JsonValue]]
 
 
-def _missing_transport(_: dict[str, Any]) -> Awaitable[Any]:
+def _missing_transport(_: HttpRequest) -> Awaitable[JsonValue]:
     raise RuntimeError("a transport callable must be provided")
 
 
@@ -66,13 +68,13 @@ class BybitExchange(BaseExchangeClient):
             "Content-Type": "application/json",
         }
 
-    def build_ws_auth_message(self, expires: int) -> Mapping[str, Any]:
+    def build_ws_auth_message(self, expires: int) -> OpArgsMessage:
         signature = hmac.new(
             self.api_secret.encode("utf-8"),
             f"GET/realtime{expires}".encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
-        return {"op": "auth", "args": [self.api_key, expires, signature]}
+        return OpArgsMessage(op="auth", args=[self.api_key, expires, signature])
 
     def to_exchange_symbol(
         self,
@@ -180,7 +182,7 @@ class BybitExchange(BaseExchangeClient):
         price: Decimal | None = None,
         reduce_only: bool = False,
     ) -> Order:
-        body: dict[str, Any] = {
+        body: dict[str, SerializableValue] = {
             "category": self._category(market_type),
             "symbol": self.to_exchange_symbol(symbol, market_type),
             "side": side.capitalize(),
@@ -254,7 +256,7 @@ class BybitExchange(BaseExchangeClient):
         symbol: str | None,
         market_type: MarketType,
     ) -> list[Order]:
-        params: dict[str, Any] = {"category": self._category(market_type)}
+        params: dict[str, SerializableValue] = {"category": self._category(market_type)}
         if symbol is not None:
             params["symbol"] = self.to_exchange_symbol(symbol, market_type)
         payload = await self._request(
@@ -273,7 +275,7 @@ class BybitExchange(BaseExchangeClient):
     ) -> list[Position]:
         if market_type is MarketType.SPOT:
             return []
-        params: dict[str, Any] = {"category": self._category(market_type)}
+        params: dict[str, SerializableValue] = {"category": self._category(market_type)}
         if symbol is not None:
             params["symbol"] = self.to_exchange_symbol(symbol, market_type)
         payload = await self._request(
@@ -307,10 +309,10 @@ class BybitExchange(BaseExchangeClient):
         method: str,
         path: str,
         *,
-        params: Mapping[str, Any] | None = None,
-        body: Mapping[str, Any] | None = None,
+        params: Mapping[str, SerializableValue] | None = None,
+        body: Mapping[str, SerializableValue] | None = None,
         signed: bool = False,
-    ) -> Any:
+    ) -> JsonValue:
         query = urlencode({key: str(value) for key, value in (params or {}).items()})
         body_text = json.dumps(body or {}, separators=(",", ":")) if body is not None else ""
         headers: dict[str, str] = {}
@@ -323,27 +325,26 @@ class BybitExchange(BaseExchangeClient):
                     body=body_text,
                 )
             )
-        request = {
-            "method": method,
-            "url": f"{self.base_url}{path}",
-            "path": path,
-            "params": dict(params or {}),
-            "query": query,
-            "body": body or {},
-            "body_text": body_text,
-            "headers": headers,
-            "signed": signed,
-        }
+        request = HttpRequest(
+            method=method,
+            url=f"{self.base_url}{path}",
+            path=path,
+            params=dict(params or {}),
+            json_body=dict(body or {}),
+            body_text=body_text,
+            headers=headers,
+            signed=signed,
+        )
         return await self._transport(request)
 
     @staticmethod
-    def _unwrap(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    def _unwrap(payload: Mapping[str, object]) -> Mapping[str, object]:
         items = payload.get("result", {}).get("list", [])
         if not items:
             return {}
         return items[0]
 
-    def _parse_order(self, payload: Mapping[str, Any], market_type: MarketType) -> Order:
+    def _parse_order(self, payload: Mapping[str, object], market_type: MarketType) -> Order:
         status_map = {
             "new": OrderStatus.NEW,
             "partiallyfilled": OrderStatus.PARTIALLY_FILLED,
@@ -369,7 +370,7 @@ class BybitExchange(BaseExchangeClient):
             raw_status=str(payload.get("orderStatus", "New")),
         )
 
-    def _parse_position(self, payload: Mapping[str, Any]) -> Position | None:
+    def _parse_position(self, payload: Mapping[str, object]) -> Position | None:
         raw_quantity = Decimal(str(payload.get("size", "0")))
         if raw_quantity == 0:
             return None
@@ -390,7 +391,7 @@ class BybitExchange(BaseExchangeClient):
             position_id=str(payload["positionIdx"]) if payload.get("positionIdx") is not None else None,
         )
 
-    def _parse_fill(self, payload: Mapping[str, Any], market_type: MarketType) -> Fill:
+    def _parse_fill(self, payload: Mapping[str, object], market_type: MarketType) -> Fill:
         exec_type = str(payload.get("execType", "")).lower()
         liquidity = "maker" if "maker" in exec_type else ("taker" if exec_type else None)
         return Fill(

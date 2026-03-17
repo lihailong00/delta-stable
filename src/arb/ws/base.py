@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pydantic import Field
 
 from arb.schemas.base import ArbFrozenModel, SerializableValue
+from arb.ws.schemas import WsEventPayload, WsWireMessage
 
 def utc_now() -> datetime:
     return datetime.now(tz=timezone.utc)
@@ -17,7 +18,7 @@ def utc_now() -> datetime:
 class WsEvent(ArbFrozenModel):
     exchange: str
     channel: str
-    payload: dict[str, SerializableValue]
+    payload: WsEventPayload
     received_at: datetime = Field(default_factory=utc_now)
 
 
@@ -39,25 +40,25 @@ class BaseWebSocketClient(ABC):
         *,
         symbol: str | None = None,
         market: str | None = None,
-    ) -> Mapping[str, SerializableValue]:
+    ) -> WsWireMessage:
         """Return the subscription payload for a WS channel."""
 
     @abstractmethod
     def parse_message(self, message: Mapping[str, SerializableValue]) -> list[WsEvent]:
         """Convert a raw WS frame into normalized events."""
 
-    def build_ping_message(self) -> Mapping[str, SerializableValue]:
+    def build_ping_message(self) -> WsWireMessage:
         return {"op": "ping"}
 
-    def is_pong_message(self, message: Mapping[str, SerializableValue]) -> bool:
-        return message.get("op") == "pong"
+    def is_pong_message(self, message: WsWireMessage) -> bool:
+        return isinstance(message, Mapping) and message.get("op") == "pong"
 
     def should_ping(self, now: datetime | None = None) -> bool:
         current = now or utc_now()
         reference = self.last_ping_at or self.last_pong_at
         return current - reference >= timedelta(seconds=self.heartbeat_interval)
 
-    def mark_ping(self, now: datetime | None = None) -> Mapping[str, SerializableValue]:
+    def mark_ping(self, now: datetime | None = None) -> WsWireMessage:
         self.last_ping_at = now or utc_now()
         return self.build_ping_message()
 
@@ -71,9 +72,11 @@ class BaseWebSocketClient(ABC):
         timeout = timedelta(seconds=self.heartbeat_interval * 2)
         return current - self.last_pong_at > timeout
 
-    def handle_message(self, message: Mapping[str, SerializableValue]) -> list[WsEvent]:
+    def handle_message(self, message: WsWireMessage) -> list[WsEvent]:
         self.last_message_at = utc_now()
         if self.is_pong_message(message):
             self.mark_pong(self.last_message_at)
+            return []
+        if not isinstance(message, Mapping):
             return []
         return self.parse_message(message)

@@ -9,17 +9,18 @@ import json
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
 from urllib.parse import urlencode
 
 from arb.exchange.base import BaseExchangeClient
 from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Position, PositionDirection, Side, Ticker
+from arb.net.schemas import HttpRequest, JsonValue
+from arb.schemas.base import SerializableValue
 from arb.utils.symbols import normalize_symbol, split_symbol
 
-RestTransport = Callable[[dict[str, Any]], Awaitable[Any]]
+RestTransport = Callable[[HttpRequest], Awaitable[JsonValue]]
 
 
-def _missing_transport(_: dict[str, Any]) -> Awaitable[Any]:
+def _missing_transport(_: HttpRequest) -> Awaitable[JsonValue]:
     raise RuntimeError("a transport callable must be provided")
 
 
@@ -269,7 +270,7 @@ class OkxExchange(BaseExchangeClient):
         symbol: str | None,
         market_type: MarketType,
     ) -> list[Order]:
-        params: dict[str, Any] = {"instType": "SPOT" if market_type is MarketType.SPOT else "SWAP"}
+        params: dict[str, SerializableValue] = {"instType": "SPOT" if market_type is MarketType.SPOT else "SWAP"}
         if symbol is not None:
             params["instId"] = self.to_exchange_symbol(symbol, market_type)
         payload = await self._request(
@@ -288,7 +289,7 @@ class OkxExchange(BaseExchangeClient):
     ) -> list[Position]:
         if market_type is MarketType.SPOT:
             return []
-        params: dict[str, Any] = {"instType": "SWAP"}
+        params: dict[str, SerializableValue] = {"instType": "SWAP"}
         if symbol is not None:
             params["instId"] = self.to_exchange_symbol(symbol, market_type)
         payload = await self._request(
@@ -322,10 +323,10 @@ class OkxExchange(BaseExchangeClient):
         method: str,
         path: str,
         *,
-        params: Mapping[str, Any] | None = None,
-        body: Mapping[str, Any] | None = None,
+        params: Mapping[str, SerializableValue] | None = None,
+        body: Mapping[str, SerializableValue] | None = None,
         signed: bool = False,
-    ) -> Any:
+    ) -> JsonValue:
         query = urlencode({key: str(value) for key, value in (params or {}).items()})
         body_text = json.dumps(body or {}, separators=(",", ":")) if body is not None else ""
         headers: dict[str, str] = {}
@@ -338,27 +339,26 @@ class OkxExchange(BaseExchangeClient):
                     body=body_text,
                 )
             )
-        request = {
-            "method": method,
-            "url": f"{self.base_url}{path}",
-            "path": path,
-            "query": query,
-            "params": dict(params or {}),
-            "body": body or {},
-            "body_text": body_text,
-            "headers": headers,
-            "signed": signed,
-        }
+        request = HttpRequest(
+            method=method,
+            url=f"{self.base_url}{path}",
+            path=path,
+            params=dict(params or {}),
+            json_body=dict(body or {}),
+            body_text=body_text,
+            headers=headers,
+            signed=signed,
+        )
         return await self._transport(request)
 
     @staticmethod
-    def _unwrap(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    def _unwrap(payload: Mapping[str, object]) -> Mapping[str, object]:
         data = payload.get("data", [])
         if not data:
             return {}
         return data[0]
 
-    def _parse_order(self, payload: Mapping[str, Any], market_type: MarketType) -> Order:
+    def _parse_order(self, payload: Mapping[str, object], market_type: MarketType) -> Order:
         status_map = {
             "live": OrderStatus.NEW,
             "partially_filled": OrderStatus.PARTIALLY_FILLED,
@@ -383,7 +383,7 @@ class OkxExchange(BaseExchangeClient):
             raw_status=str(payload.get("state", "live")),
         )
 
-    def _parse_position(self, payload: Mapping[str, Any]) -> Position | None:
+    def _parse_position(self, payload: Mapping[str, object]) -> Position | None:
         raw_quantity = Decimal(str(payload.get("pos", "0")))
         if raw_quantity == 0:
             return None
@@ -404,7 +404,7 @@ class OkxExchange(BaseExchangeClient):
             position_id=str(payload["posId"]) if payload.get("posId") else None,
         )
 
-    def _parse_fill(self, payload: Mapping[str, Any], market_type: MarketType) -> Fill:
+    def _parse_fill(self, payload: Mapping[str, object], market_type: MarketType) -> Fill:
         return Fill(
             exchange=self.name,
             symbol=self.from_exchange_symbol(str(payload["instId"]), market_type),

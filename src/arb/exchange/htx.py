@@ -9,17 +9,18 @@ import json
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
 from urllib.parse import urlencode
 
 from arb.exchange.base import BaseExchangeClient
 from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Position, PositionDirection, Side, Ticker
+from arb.net.schemas import HttpRequest, JsonValue
+from arb.schemas.base import SerializableValue
 from arb.utils.symbols import normalize_symbol, split_symbol
 
-RestTransport = Callable[[dict[str, Any]], Awaitable[Any]]
+RestTransport = Callable[[HttpRequest], Awaitable[JsonValue]]
 
 
-def _missing_transport(_: dict[str, Any]) -> Awaitable[Any]:
+def _missing_transport(_: HttpRequest) -> Awaitable[JsonValue]:
     raise RuntimeError("a transport callable must be provided")
 
 
@@ -54,7 +55,7 @@ class HtxExchange(BaseExchangeClient):
         path: str,
         *,
         host: str = "api.huobi.pro",
-        params: Mapping[str, Any] | None = None,
+        params: Mapping[str, SerializableValue] | None = None,
         timestamp: str | None = None,
     ) -> Mapping[str, str]:
         base_params = {
@@ -225,7 +226,7 @@ class HtxExchange(BaseExchangeClient):
         if market_type is MarketType.SPOT:
             account_id = await self._ensure_spot_account_id()
             order_type = f"{side.lower()}-{'limit' if price is not None else 'market'}"
-            body: dict[str, Any] = {
+            body: dict[str, SerializableValue] = {
                 "account-id": account_id,
                 "symbol": self.to_exchange_symbol(symbol, market_type),
                 "type": order_type,
@@ -349,7 +350,7 @@ class HtxExchange(BaseExchangeClient):
     ) -> list[Order]:
         if market_type is MarketType.SPOT:
             account_id = await self._ensure_spot_account_id()
-            params: dict[str, Any] = {"account-id": account_id}
+            params: dict[str, SerializableValue] = {"account-id": account_id}
             if symbol is not None:
                 params["symbol"] = self.to_exchange_symbol(symbol, market_type)
             payload = await self._request(
@@ -362,7 +363,7 @@ class HtxExchange(BaseExchangeClient):
             )
             data = payload["data"]
         else:
-            body: dict[str, Any] = {}
+            body: dict[str, SerializableValue] = {}
             if symbol is not None:
                 body["contract_code"] = self.to_exchange_symbol(symbol, market_type)
             payload = await self._request(
@@ -384,7 +385,7 @@ class HtxExchange(BaseExchangeClient):
     ) -> list[Position]:
         if market_type is MarketType.SPOT:
             return []
-        body: dict[str, Any] = {}
+        body: dict[str, SerializableValue] = {}
         if symbol is not None:
             body["contract_code"] = self.to_exchange_symbol(symbol, market_type)
         payload = await self._request(
@@ -457,12 +458,12 @@ class HtxExchange(BaseExchangeClient):
         method: str,
         path: str,
         *,
-        params: Mapping[str, Any] | None = None,
-        body: Mapping[str, Any] | None = None,
+        params: Mapping[str, SerializableValue] | None = None,
+        body: Mapping[str, SerializableValue] | None = None,
         signed: bool = False,
         base_url: str,
         host: str | None = None,
-    ) -> Any:
+    ) -> JsonValue:
         request_params = {key: str(value) for key, value in (params or {}).items()}
         if signed:
             request_params = dict(
@@ -474,24 +475,23 @@ class HtxExchange(BaseExchangeClient):
                 )
             )
         body_text = json.dumps(body or {}, separators=(",", ":")) if body is not None else ""
-        request = {
-            "method": method,
-            "url": f"{base_url}{path}",
-            "path": path,
-            "params": request_params,
-            "query": urlencode(sorted(request_params.items())),
-            "body": body or {},
-            "body_text": body_text,
-            "headers": {"Content-Type": "application/json"} if body is not None else {},
-            "signed": signed,
-        }
+        request = HttpRequest(
+            method=method,
+            url=f"{base_url}{path}",
+            path=path,
+            params=request_params,
+            json_body=dict(body or {}),
+            body_text=body_text,
+            headers={"Content-Type": "application/json"} if body is not None else {},
+            signed=signed,
+        )
         payload = await self._transport(request)
         status = str(payload.get("status", "ok"))
         if status != "ok":
             raise RuntimeError(f"HTX request failed: {payload.get('err-code', payload.get('err-msg', status))}")
         return payload
 
-    def _parse_order(self, payload: Mapping[str, Any], symbol: str, market_type: MarketType) -> Order:
+    def _parse_order(self, payload: Mapping[str, object], symbol: str, market_type: MarketType) -> Order:
         status_key = str(payload.get("state", payload.get("status", "submitted"))).lower()
         status = {
             "submitted": OrderStatus.NEW,
@@ -531,7 +531,7 @@ class HtxExchange(BaseExchangeClient):
             raw_status=status_key,
         )
 
-    def _parse_position(self, payload: Mapping[str, Any]) -> Position | None:
+    def _parse_position(self, payload: Mapping[str, object]) -> Position | None:
         quantity = Decimal(str(payload.get("volume", payload.get("available", "0"))))
         if quantity == 0:
             return None
@@ -550,7 +550,7 @@ class HtxExchange(BaseExchangeClient):
             margin_mode=str(payload["margin_mode"]) if payload.get("margin_mode") else None,
         )
 
-    def _parse_fill(self, payload: Mapping[str, Any], symbol: str, market_type: MarketType) -> Fill:
+    def _parse_fill(self, payload: Mapping[str, object], symbol: str, market_type: MarketType) -> Fill:
         ts_value = payload.get("created-at", payload.get("create_date", int(datetime.now(tz=timezone.utc).timestamp() * 1000)))
         if isinstance(ts_value, str) and not ts_value.isdigit():
             timestamp = datetime.fromisoformat(ts_value)

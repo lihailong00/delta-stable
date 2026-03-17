@@ -5,9 +5,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from decimal import Decimal
-from typing import Any
 
 from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, Position, Ticker
+from arb.net.schemas import HttpRequest
 
 
 class BaseExchangeClient(ABC):
@@ -144,15 +144,15 @@ class BaseExchangeClient(ABC):
         query: str = "",
         body: str = "",
         timestamp: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> HttpRequest:
         """Build a transport-ready REST request description."""
 
-        return {
-            "method": method.upper(),
-            "path": path,
-            "query": query,
-            "body": body,
-            "headers": dict(
+        return HttpRequest(
+            method=method.upper(),
+            url=path,
+            path=path,
+            body_text=body,
+            headers=dict(
                 self.sign_request(
                     method.upper(),
                     path,
@@ -161,4 +161,4 @@ class BaseExchangeClient(ABC):
                     timestamp=timestamp,
                 )
             ),
-        }
+        )

@@ -8,17 +8,18 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
 from urllib.parse import urlencode
 
 from arb.exchange.base import BaseExchangeClient
 from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Position, PositionDirection, Side, Ticker
+from arb.net.schemas import HttpRequest, JsonValue, expect_list, expect_mapping
+from arb.schemas.base import SerializableValue
 from arb.utils.symbols import exchange_symbol, normalize_symbol
 
-RestTransport = Callable[[dict[str, Any]], Awaitable[Any]]
+RestTransport = Callable[[HttpRequest], Awaitable[JsonValue]]
 
 
-def _missing_transport(_: dict[str, Any]) -> Awaitable[Any]:
+def _missing_transport(_: HttpRequest) -> Awaitable[JsonValue]:
     raise RuntimeError("a transport callable must be provided")
 
 
@@ -26,7 +27,7 @@ def _utc_from_millis(value: int | str) -> datetime:
     return datetime.fromtimestamp(int(value) / 1000, tz=timezone.utc)
 
 
-def _stringify(value: Any) -> str:
+def _stringify(value: SerializableValue) -> str:
     if isinstance(value, Decimal):
         return format(value, "f")
     if isinstance(value, bool):
@@ -87,7 +88,7 @@ class BinanceExchange(BaseExchangeClient):
 
     def sign_params(
         self,
-        params: Mapping[str, Any],
+        params: Mapping[str, SerializableValue],
         *,
         timestamp: int | None = None,
     ) -> dict[str, str]:
@@ -110,7 +111,7 @@ class BinanceExchange(BaseExchangeClient):
             market_type=market_type,
             params={"symbol": self.to_exchange_symbol(symbol, market_type)},
         )
-        return self._parse_ticker(payload, market_type)
+        return self._parse_ticker(expect_mapping(payload, context="binance ticker"), market_type)
 
     async def fetch_orderbook(
         self,
@@ -125,7 +126,7 @@ class BinanceExchange(BaseExchangeClient):
             market_type=market_type,
             params={"symbol": self.to_exchange_symbol(symbol, market_type), "limit": limit},
         )
-        return self._parse_orderbook(payload, symbol, market_type)
+        return self._parse_orderbook(expect_mapping(payload, context="binance orderbook"), symbol, market_type)
 
     async def fetch_funding_rate(self, symbol: str) -> FundingRate:
         payload = await self._request(
@@ -134,7 +135,7 @@ class BinanceExchange(BaseExchangeClient):
             market_type=MarketType.PERPETUAL,
             params={"symbol": self.to_exchange_symbol(symbol, MarketType.PERPETUAL)},
         )
-        return self._parse_funding_rate(payload)
+        return self._parse_funding_rate(expect_mapping(payload, context="binance funding"))
 
     async def fetch_balances(self) -> Mapping[str, Decimal]:
         payload = await self._request(
@@ -144,7 +145,7 @@ class BinanceExchange(BaseExchangeClient):
             params={},
             signed=True,
         )
-        balances = payload.get("balances", [])
+        balances = expect_mapping(payload, context="binance balances").get("balances", [])
         return {
             item["asset"]: Decimal(item["free"]) + Decimal(item.get("locked", "0"))
             for item in balances
@@ -161,7 +162,7 @@ class BinanceExchange(BaseExchangeClient):
         reduce_only: bool = False,
     ) -> Order:
         path = "/api/v3/order" if market_type is MarketType.SPOT else "/fapi/v1/order"
-        params: dict[str, Any] = {
+        params: dict[str, SerializableValue] = {
             "symbol": self.to_exchange_symbol(symbol, market_type),
             "side": side.upper(),
             "quantity": quantity,
@@ -179,7 +180,7 @@ class BinanceExchange(BaseExchangeClient):
             params=params,
             signed=True,
         )
-        return self._parse_order(payload, market_type)
+        return self._parse_order(expect_mapping(payload, context="binance create order"), market_type)
 
     async def cancel_order(
         self,
@@ -198,7 +199,7 @@ class BinanceExchange(BaseExchangeClient):
             },
             signed=True,
         )
-        return self._parse_order(payload, market_type)
+        return self._parse_order(expect_mapping(payload, context="binance cancel order"), market_type)
 
     async def fetch_order(
         self,
@@ -217,7 +218,7 @@ class BinanceExchange(BaseExchangeClient):
             },
             signed=True,
         )
-        return self._parse_order(payload, market_type)
+        return self._parse_order(expect_mapping(payload, context="binance fetch order"), market_type)
 
     async def fetch_open_orders(
         self,
@@ -225,7 +226,7 @@ class BinanceExchange(BaseExchangeClient):
         market_type: MarketType,
     ) -> list[Order]:
         path = "/api/v3/openOrders" if market_type is MarketType.SPOT else "/fapi/v1/openOrders"
-        params: dict[str, Any] = {}
+        params: dict[str, SerializableValue] = {}
         if symbol is not None:
             params["symbol"] = self.to_exchange_symbol(symbol, market_type)
         payload = await self._request(
@@ -235,7 +236,7 @@ class BinanceExchange(BaseExchangeClient):
             params=params,
             signed=True,
         )
-        return [self._parse_order(item, market_type) for item in payload]
+        return [self._parse_order(expect_mapping(item, context="binance open order"), market_type) for item in expect_list(payload, context="binance open orders")]
 
     async def fetch_positions(
         self,
@@ -245,7 +246,7 @@ class BinanceExchange(BaseExchangeClient):
     ) -> list[Position]:
         if market_type is MarketType.SPOT:
             return []
-        params: dict[str, Any] = {}
+        params: dict[str, SerializableValue] = {}
         if symbol is not None:
             params["symbol"] = self.to_exchange_symbol(symbol, market_type)
         payload = await self._request(
@@ -255,7 +256,11 @@ class BinanceExchange(BaseExchangeClient):
             params=params,
             signed=True,
         )
-        return [position for item in payload if (position := self._parse_position(item)) is not None]
+        return [
+            position
+            for item in expect_list(payload, context="binance positions")
+            if (position := self._parse_position(expect_mapping(item, context="binance position"))) is not None
+        ]
 
     async def fetch_fills(
         self,
@@ -274,7 +279,10 @@ class BinanceExchange(BaseExchangeClient):
             },
             signed=True,
         )
-        return [self._parse_fill(item, symbol, market_type) for item in payload]
+        return [
+            self._parse_fill(expect_mapping(item, context="binance fill"), symbol, market_type)
+            for item in expect_list(payload, context="binance fills")
+        ]
 
     async def _request(
         self,
@@ -282,27 +290,27 @@ class BinanceExchange(BaseExchangeClient):
         path: str,
         *,
         market_type: MarketType,
-        params: Mapping[str, Any],
+        params: Mapping[str, SerializableValue],
         signed: bool = False,
-    ) -> Any:
+    ) -> JsonValue:
         payload_params = dict(params)
         headers: dict[str, str] = {}
         if signed:
             payload_params = self.sign_params(payload_params)
             headers["X-MBX-APIKEY"] = self.api_key
         base_url = self.spot_base_url if market_type is MarketType.SPOT else self.futures_base_url
-        request = {
-            "method": method,
-            "url": f"{base_url}{path}",
-            "path": path,
-            "headers": headers,
-            "params": payload_params,
-            "market_type": market_type.value,
-            "signed": signed,
-        }
+        request = HttpRequest(
+            method=method,
+            url=f"{base_url}{path}",
+            path=path,
+            headers=headers,
+            params=payload_params,
+            market_type=market_type.value,
+            signed=signed,
+        )
         return await self._transport(request)
 
-    def _parse_ticker(self, payload: Mapping[str, Any], market_type: MarketType) -> Ticker:
+    def _parse_ticker(self, payload: Mapping[str, object], market_type: MarketType) -> Ticker:
         symbol = self.from_exchange_symbol(str(payload["symbol"]), market_type)
         bid = Decimal(str(payload.get("bidPrice", payload.get("b"))))
         ask = Decimal(str(payload.get("askPrice", payload.get("a"))))
@@ -318,7 +326,7 @@ class BinanceExchange(BaseExchangeClient):
 
     def _parse_orderbook(
         self,
-        payload: Mapping[str, Any],
+        payload: Mapping[str, object],
         symbol: str,
         market_type: MarketType,
     ) -> OrderBook:
@@ -338,7 +346,7 @@ class BinanceExchange(BaseExchangeClient):
             asks=asks,
         )
 
-    def _parse_funding_rate(self, payload: Mapping[str, Any]) -> FundingRate:
+    def _parse_funding_rate(self, payload: Mapping[str, object]) -> FundingRate:
         return FundingRate(
             exchange=self.name,
             symbol=self.from_exchange_symbol(str(payload["symbol"]), MarketType.PERPETUAL),
@@ -347,7 +355,7 @@ class BinanceExchange(BaseExchangeClient):
             predicted_rate=Decimal(str(payload["lastFundingRate"])),
         )
 
-    def _parse_order(self, payload: Mapping[str, Any], market_type: MarketType) -> Order:
+    def _parse_order(self, payload: Mapping[str, object], market_type: MarketType) -> Order:
         status_map = {
             "NEW": OrderStatus.NEW,
             "PARTIALLY_FILLED": OrderStatus.PARTIALLY_FILLED,
@@ -380,7 +388,7 @@ class BinanceExchange(BaseExchangeClient):
             raw_status=str(payload.get("status", "NEW")),
         )
 
-    def _parse_position(self, payload: Mapping[str, Any]) -> Position | None:
+    def _parse_position(self, payload: Mapping[str, object]) -> Position | None:
         raw_quantity = Decimal(str(payload.get("positionAmt", payload.get("position_amount", "0"))))
         if raw_quantity == 0:
             return None
@@ -412,7 +420,7 @@ class BinanceExchange(BaseExchangeClient):
             margin_mode=str(payload["marginType"]) if payload.get("marginType") else None,
         )
 
-    def _parse_fill(self, payload: Mapping[str, Any], symbol: str, market_type: MarketType) -> Fill:
+    def _parse_fill(self, payload: Mapping[str, object], symbol: str, market_type: MarketType) -> Fill:
         if payload.get("side") is not None:
             side = Side(str(payload["side"]).lower())
         else:

@@ -5,10 +5,10 @@ from __future__ import annotations
 import time
 from collections.abc import Mapping
 from decimal import Decimal
-from typing import Any
 
 from arb.utils.symbols import exchange_symbol, normalize_symbol
 from arb.ws.base import BaseWebSocketClient, WsEvent
+from arb.ws.schemas import FillUpdatePayload, GateMessage, OrderBookUpdatePayload, OrderUpdatePayload, PositionUpdatePayload
 
 
 class GateWebSocketClient(BaseWebSocketClient):
@@ -26,32 +26,32 @@ class GateWebSocketClient(BaseWebSocketClient):
         *,
         symbol: str | None = None,
         market: str | None = None,
-    ) -> Mapping[str, Any]:
+    ) -> GateMessage:
         if self.private and channel in {"spot.orders", "futures.orders", "futures.usertrades", "futures.positions"}:
-            return {
-                "time": int(time.time()),
-                "channel": channel,
-                "event": "subscribe",
-                "payload": [exchange_symbol(symbol, delimiter="_")] if symbol is not None else [],
-            }
+            return GateMessage(
+                time=int(time.time()),
+                channel=channel,
+                event="subscribe",
+                payload=[exchange_symbol(symbol, delimiter="_")] if symbol is not None else [],
+            )
         if symbol is None:
             raise ValueError("symbol is required for Gate subscriptions")
         if channel != "spot.order_book":
             raise ValueError(f"unsupported Gate channel: {channel}")
-        return {
-            "time": int(time.time()),
-            "channel": channel,
-            "event": "subscribe",
-            "payload": [exchange_symbol(symbol, delimiter="_"), "20", "100ms"],
-        }
+        return GateMessage(
+            time=int(time.time()),
+            channel=channel,
+            event="subscribe",
+            payload=[exchange_symbol(symbol, delimiter="_"), "20", "100ms"],
+        )
 
-    def build_ping_message(self) -> Mapping[str, Any]:
-        return {"time": int(time.time()), "channel": "spot.ping"}
+    def build_ping_message(self) -> GateMessage:
+        return GateMessage(time=int(time.time()), channel="spot.ping", event="ping")
 
-    def is_pong_message(self, message: Mapping[str, Any]) -> bool:
+    def is_pong_message(self, message: Mapping[str, object]) -> bool:
         return message.get("channel") == "spot.pong" or message.get("event") == "pong"
 
-    def parse_message(self, message: Mapping[str, Any]) -> list[WsEvent]:
+    def parse_message(self, message: Mapping[str, object]) -> list[WsEvent]:
         if message.get("event") in {"subscribe", "unsubscribe"}:
             return []
         if message.get("channel") in {"spot.orders", "futures.orders"}:
@@ -69,20 +69,16 @@ class GateWebSocketClient(BaseWebSocketClient):
             WsEvent(
                 exchange=self.exchange,
                 channel="orderbook.update",
-                payload={
-                    "symbol": normalize_symbol(str(result["s"])),
-                    "bids": tuple(
-                        (Decimal(str(level[0])), Decimal(str(level[1]))) for level in result.get("bids", [])
-                    ),
-                    "asks": tuple(
-                        (Decimal(str(level[0])), Decimal(str(level[1]))) for level in result.get("asks", [])
-                    ),
-                    "timestamp": result.get("t"),
-                },
+                payload=OrderBookUpdatePayload(
+                    symbol=normalize_symbol(str(result["s"])),
+                    bids=tuple((Decimal(str(level[0])), Decimal(str(level[1]))) for level in result.get("bids", [])),
+                    asks=tuple((Decimal(str(level[0])), Decimal(str(level[1]))) for level in result.get("asks", [])),
+                    timestamp=int(result["t"]) if result.get("t") is not None else None,
+                ),
             )
         ]
 
-    def _parse_private_orders(self, message: Mapping[str, Any]) -> list[WsEvent]:
+    def _parse_private_orders(self, message: Mapping[str, object]) -> list[WsEvent]:
         items = message.get("result", [])
         if isinstance(items, Mapping):
             items = [items]
@@ -93,20 +89,20 @@ class GateWebSocketClient(BaseWebSocketClient):
                 WsEvent(
                     exchange=self.exchange,
                     channel="order.update",
-                    payload={
-                        "symbol": symbol,
-                        "order_id": str(item.get("id", "")),
-                        "side": str(item.get("side", "buy")).lower(),
-                        "status": str(item.get("status", item.get("finish_as", "open"))).lower(),
-                        "quantity": Decimal(str(item.get("amount", item.get("size", "0")))),
-                        "filled_quantity": Decimal(str(item.get("filled_amount", item.get("fill_size", "0")))),
-                        "price": Decimal(str(item["price"])) if item.get("price") not in (None, "", "0") else None,
-                    },
+                    payload=OrderUpdatePayload(
+                        symbol=symbol,
+                        order_id=str(item.get("id", "")),
+                        side=str(item.get("side", "buy")).lower(),
+                        status=str(item.get("status", item.get("finish_as", "open"))).lower(),
+                        quantity=Decimal(str(item.get("amount", item.get("size", "0")))),
+                        filled_quantity=Decimal(str(item.get("filled_amount", item.get("fill_size", "0")))),
+                        price=Decimal(str(item["price"])) if item.get("price") not in (None, "", "0") else None,
+                    ),
                 )
             )
         return events
 
-    def _parse_private_fills(self, message: Mapping[str, Any]) -> list[WsEvent]:
+    def _parse_private_fills(self, message: Mapping[str, object]) -> list[WsEvent]:
         items = message.get("result", [])
         if isinstance(items, Mapping):
             items = [items]
@@ -114,21 +110,21 @@ class GateWebSocketClient(BaseWebSocketClient):
             WsEvent(
                 exchange=self.exchange,
                 channel="fill.update",
-                payload={
-                    "symbol": normalize_symbol(str(item.get("contract", ""))),
-                    "order_id": str(item.get("order_id", "")),
-                    "fill_id": str(item.get("id", "")),
-                    "side": ("buy" if Decimal(str(item.get("size", "0"))) > 0 else "sell"),
-                    "quantity": abs(Decimal(str(item.get("size", "0")))),
-                    "price": Decimal(str(item.get("price", "0"))),
-                    "fee": Decimal(str(item.get("fee", "0"))),
-                    "fee_asset": item.get("fee_currency"),
-                },
+                payload=FillUpdatePayload(
+                    symbol=normalize_symbol(str(item.get("contract", ""))),
+                    order_id=str(item.get("order_id", "")),
+                    fill_id=str(item.get("id", "")),
+                    side="buy" if Decimal(str(item.get("size", "0"))) > 0 else "sell",
+                    quantity=abs(Decimal(str(item.get("size", "0")))),
+                    price=Decimal(str(item.get("price", "0"))),
+                    fee=Decimal(str(item.get("fee", "0"))),
+                    fee_asset=str(item["fee_currency"]) if item.get("fee_currency") is not None else None,
+                ),
             )
             for item in items
         ]
 
-    def _parse_private_positions(self, message: Mapping[str, Any]) -> list[WsEvent]:
+    def _parse_private_positions(self, message: Mapping[str, object]) -> list[WsEvent]:
         items = message.get("result", [])
         if isinstance(items, Mapping):
             items = [items]
@@ -136,14 +132,14 @@ class GateWebSocketClient(BaseWebSocketClient):
             WsEvent(
                 exchange=self.exchange,
                 channel="position.update",
-                payload={
-                    "symbol": normalize_symbol(str(item.get("contract", ""))),
-                    "direction": "long" if Decimal(str(item.get("size", "0"))) > 0 else "short",
-                    "quantity": abs(Decimal(str(item.get("size", "0")))),
-                    "entry_price": Decimal(str(item.get("entry_price", "0"))),
-                    "mark_price": Decimal(str(item.get("mark_price", "0"))),
-                    "unrealized_pnl": Decimal(str(item.get("unrealised_pnl", "0"))),
-                },
+                payload=PositionUpdatePayload(
+                    symbol=normalize_symbol(str(item.get("contract", ""))),
+                    direction="long" if Decimal(str(item.get("size", "0"))) > 0 else "short",
+                    quantity=abs(Decimal(str(item.get("size", "0")))),
+                    entry_price=Decimal(str(item.get("entry_price", "0"))),
+                    mark_price=Decimal(str(item.get("mark_price", "0"))),
+                    unrealized_pnl=Decimal(str(item.get("unrealised_pnl", "0"))),
+                ),
             )
             for item in items
             if Decimal(str(item.get("size", "0"))) != 0

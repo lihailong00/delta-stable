@@ -9,17 +9,18 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
 from urllib.parse import urlencode
 
 from arb.exchange.base import BaseExchangeClient
 from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Position, PositionDirection, Side, Ticker
+from arb.net.schemas import HttpRequest, JsonValue
+from arb.schemas.base import SerializableValue
 from arb.utils.symbols import exchange_symbol, normalize_symbol
 
-RestTransport = Callable[[dict[str, Any]], Awaitable[Any]]
+RestTransport = Callable[[HttpRequest], Awaitable[JsonValue]]
 
 
-def _missing_transport(_: dict[str, Any]) -> Awaitable[Any]:
+def _missing_transport(_: HttpRequest) -> Awaitable[JsonValue]:
     raise RuntimeError("a transport callable must be provided")
 
 
@@ -275,7 +276,7 @@ class GateExchange(BaseExchangeClient):
         market_type: MarketType,
     ) -> list[Order]:
         if market_type is MarketType.SPOT:
-            params: dict[str, Any] = {"status": "open"}
+            params: dict[str, SerializableValue] = {"status": "open"}
             if symbol is not None:
                 params["currency_pair"] = self.to_exchange_symbol(symbol, market_type)
             payload = await self._request("GET", "/spot/orders", params=params, signed=True)
@@ -295,7 +296,7 @@ class GateExchange(BaseExchangeClient):
     ) -> list[Position]:
         if market_type is MarketType.SPOT:
             return []
-        params: dict[str, Any] = {}
+        params: dict[str, SerializableValue] = {}
         if symbol is not None:
             params["contract"] = self.to_exchange_symbol(symbol, market_type)
         payload = await self._request(
@@ -333,10 +334,10 @@ class GateExchange(BaseExchangeClient):
         method: str,
         path: str,
         *,
-        params: Mapping[str, Any] | None = None,
-        body: Mapping[str, Any] | None = None,
+        params: Mapping[str, SerializableValue] | None = None,
+        body: Mapping[str, SerializableValue] | None = None,
         signed: bool = False,
-    ) -> Any:
+    ) -> JsonValue:
         query = urlencode({key: str(value) for key, value in (params or {}).items()})
         body_text = json.dumps(body or {}, separators=(",", ":")) if body is not None else ""
         headers: dict[str, str] = {}
@@ -349,20 +350,19 @@ class GateExchange(BaseExchangeClient):
                     body=body_text,
                 )
             )
-        request = {
-            "method": method,
-            "url": f"{self.base_url}{path}",
-            "path": path,
-            "query": query,
-            "params": dict(params or {}),
-            "body": body or {},
-            "body_text": body_text,
-            "headers": headers,
-            "signed": signed,
-        }
+        request = HttpRequest(
+            method=method,
+            url=f"{self.base_url}{path}",
+            path=path,
+            params=dict(params or {}),
+            json_body=dict(body or {}),
+            body_text=body_text,
+            headers=headers,
+            signed=signed,
+        )
         return await self._transport(request)
 
-    def _parse_order(self, payload: Mapping[str, Any], symbol: str, market_type: MarketType) -> Order:
+    def _parse_order(self, payload: Mapping[str, object], symbol: str, market_type: MarketType) -> Order:
         if market_type is MarketType.SPOT:
             status_key = str(payload.get("status", "open")).lower()
             status = {
@@ -413,7 +413,7 @@ class GateExchange(BaseExchangeClient):
             raw_status=str(payload.get("status", payload.get("finish_as", "open"))),
         )
 
-    def _parse_position(self, payload: Mapping[str, Any]) -> Position | None:
+    def _parse_position(self, payload: Mapping[str, object]) -> Position | None:
         raw_size = Decimal(str(payload.get("size", "0")))
         if raw_size == 0:
             return None
@@ -432,7 +432,7 @@ class GateExchange(BaseExchangeClient):
             margin_mode=str(payload["mode"]) if payload.get("mode") else None,
         )
 
-    def _parse_fill(self, payload: Mapping[str, Any], symbol: str, market_type: MarketType) -> Fill:
+    def _parse_fill(self, payload: Mapping[str, object], symbol: str, market_type: MarketType) -> Fill:
         side = payload.get("side")
         if side is None:
             raw_size = Decimal(str(payload.get("size", "0")))

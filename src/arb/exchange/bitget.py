@@ -10,17 +10,18 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
 from urllib.parse import urlencode
 
 from arb.exchange.base import BaseExchangeClient
 from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Position, PositionDirection, Side, Ticker
+from arb.net.schemas import HttpRequest, JsonValue
+from arb.schemas.base import SerializableValue
 from arb.utils.symbols import exchange_symbol, normalize_symbol, split_symbol
 
-RestTransport = Callable[[dict[str, Any]], Awaitable[Any]]
+RestTransport = Callable[[HttpRequest], Awaitable[JsonValue]]
 
 
-def _missing_transport(_: dict[str, Any]) -> Awaitable[Any]:
+def _missing_transport(_: HttpRequest) -> Awaitable[JsonValue]:
     raise RuntimeError("a transport callable must be provided")
 
 
@@ -190,7 +191,7 @@ class BitgetExchange(BaseExchangeClient):
         reduce_only: bool = False,
     ) -> Order:
         if market_type is MarketType.SPOT:
-            body: dict[str, Any] = {
+            body: dict[str, SerializableValue] = {
                 "symbol": self.to_exchange_symbol(symbol, market_type),
                 "side": side,
                 "orderType": "limit" if price is not None else "market",
@@ -310,7 +311,7 @@ class BitgetExchange(BaseExchangeClient):
         market_type: MarketType,
     ) -> list[Order]:
         if market_type is MarketType.SPOT:
-            params: dict[str, Any] = {}
+            params: dict[str, SerializableValue] = {}
             if symbol is not None:
                 params["symbol"] = self.to_exchange_symbol(symbol, market_type)
             payload = await self._request(
@@ -339,7 +340,7 @@ class BitgetExchange(BaseExchangeClient):
     ) -> list[Position]:
         if market_type is MarketType.SPOT:
             return []
-        params: dict[str, Any] = {"productType": self.product_type}
+        params: dict[str, SerializableValue] = {"productType": self.product_type}
         endpoint = "/api/v2/mix/position/all-position"
         if symbol is not None:
             endpoint = "/api/v2/mix/position/single-position"
@@ -389,29 +390,28 @@ class BitgetExchange(BaseExchangeClient):
         method: str,
         path: str,
         *,
-        params: Mapping[str, Any] | None = None,
-        body: Mapping[str, Any] | None = None,
+        params: Mapping[str, SerializableValue] | None = None,
+        body: Mapping[str, SerializableValue] | None = None,
         signed: bool = False,
-    ) -> Any:
+    ) -> JsonValue:
         query = urlencode({key: str(value) for key, value in (params or {}).items()})
         body_text = json.dumps(body or {}, separators=(",", ":")) if body is not None else ""
         headers: dict[str, str] = {}
         if signed:
             headers = dict(self.sign_request(method, path, query=query, body=body_text))
-        request = {
-            "method": method,
-            "url": f"{self.base_url}{path}",
-            "path": path,
-            "query": query,
-            "params": dict(params or {}),
-            "body": body or {},
-            "body_text": body_text,
-            "headers": headers,
-            "signed": signed,
-        }
+        request = HttpRequest(
+            method=method,
+            url=f"{self.base_url}{path}",
+            path=path,
+            params=dict(params or {}),
+            json_body=dict(body or {}),
+            body_text=body_text,
+            headers=headers,
+            signed=signed,
+        )
         return await self._transport(request)
 
-    def _unwrap(self, payload: Mapping[str, Any]) -> Any:
+    def _unwrap(self, payload: Mapping[str, object]) -> object:
         code = str(payload.get("code", ""))
         if code and code != "00000":
             raise RuntimeError(f"Bitget request failed: {code} {payload.get('msg', payload.get('message', ''))}")
@@ -422,7 +422,7 @@ class BitgetExchange(BaseExchangeClient):
             return data[0]
         return data
 
-    def _parse_order(self, payload: Mapping[str, Any], symbol: str, market_type: MarketType) -> Order:
+    def _parse_order(self, payload: Mapping[str, object], symbol: str, market_type: MarketType) -> Order:
         status_map = {
             "new": OrderStatus.NEW,
             "live": OrderStatus.NEW,
@@ -458,7 +458,7 @@ class BitgetExchange(BaseExchangeClient):
             raw_status=str(payload.get("status", payload.get("state", "new"))),
         )
 
-    def _parse_position(self, payload: Mapping[str, Any]) -> Position | None:
+    def _parse_position(self, payload: Mapping[str, object]) -> Position | None:
         raw_quantity = Decimal(str(payload.get("total", payload.get("openDelegateSize", payload.get("holdVol", "0")))))
         if raw_quantity == 0:
             return None
@@ -478,7 +478,7 @@ class BitgetExchange(BaseExchangeClient):
             margin_mode=str(payload["marginMode"]) if payload.get("marginMode") else None,
         )
 
-    def _parse_fill(self, payload: Mapping[str, Any], symbol: str, market_type: MarketType) -> Fill:
+    def _parse_fill(self, payload: Mapping[str, object], symbol: str, market_type: MarketType) -> Fill:
         side = str(payload.get("side", "buy")).lower()
         if side in {"open_short", "close_long"}:
             side = "sell"

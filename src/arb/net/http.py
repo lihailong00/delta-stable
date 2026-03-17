@@ -5,16 +5,23 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any
+from typing import Protocol
 
 from arb.net.errors import HttpStatusError, NetworkError
+from arb.net.schemas import HttpRequest, JsonValue, coerce_http_request
 
 try:
     import httpx  # type: ignore
 except Exception:  # pragma: no cover
     httpx = None  # type: ignore
 
-Signer = Callable[[dict[str, Any]], dict[str, Any]]
+
+class SupportsHttpClient(Protocol):
+    async def request(self, method: str, url: str, **kwargs: object) -> object:
+        ...
+
+
+Signer = Callable[[HttpRequest], HttpRequest]
 SleepFn = Callable[[float], Awaitable[None]]
 ClockFn = Callable[[], float]
 
@@ -50,7 +57,7 @@ class HttpTransport:
     def __init__(
         self,
         *,
-        client: Any | None = None,
+        client: SupportsHttpClient | None = None,
         timeout: float = 10.0,
         retries: int = 2,
         rate_limiter: AsyncRateLimiter | None = None,
@@ -64,8 +71,8 @@ class HttpTransport:
         self.sleep = sleep or asyncio.sleep
         self.client = client or self._build_default_client(timeout)
 
-    async def request(self, request: Mapping[str, Any]) -> Any:
-        payload = dict(request)
+    async def request(self, request: HttpRequest | Mapping[str, JsonValue]) -> JsonValue:
+        payload = coerce_http_request(request)
         if self.signer is not None:
             payload = self.signer(payload)
         if self.rate_limiter is not None:
@@ -84,16 +91,16 @@ class HttpTransport:
                     raise
             await self.sleep(min(0.05 * attempts, 0.2))
 
-    async def _send(self, request: Mapping[str, Any]) -> Any:
+    async def _send(self, request: HttpRequest) -> JsonValue:
         try:
             response = await self.client.request(
-                request["method"],
-                request["url"],
-                headers=request.get("headers"),
-                params=request.get("params"),
-                json=request.get("body") or request.get("json"),
-                content=request.get("body_text"),
-                timeout=request.get("timeout", self.timeout),
+                request.method,
+                request.url,
+                headers=request.headers or None,
+                params=request.params or None,
+                json=request.json_body,
+                content=request.body_text,
+                timeout=request.timeout or self.timeout,
             )
         except Exception as exc:  # pragma: no cover - exercised via fake client in tests
             raise NetworkError(str(exc)) from exc
@@ -107,7 +114,7 @@ class HttpTransport:
         return response
 
     @staticmethod
-    def _build_default_client(timeout: float) -> Any:
+    def _build_default_client(timeout: float) -> SupportsHttpClient:
         if httpx is None:
             raise RuntimeError("httpx is not installed; inject a client or install httpx")
         return httpx.AsyncClient(timeout=timeout)
