@@ -3,9 +3,9 @@
 from .binance_runtime import BinanceRuntime
 from .bitget_runtime import BitgetRuntime
 from .bybit_runtime import BybitRuntime
-from .cross_exchange_funding_service import ActiveCrossExchangeArb, CrossExchangeFundingService
+from .cross_exchange_funding_service import CrossExchangeFundingService
 from .exchange_manager import LiveExchangeManager, ScanTarget
-from .funding_arb_service import ActiveFundingArb, FundingArbService
+from .funding_arb_service import FundingArbService
 from .gate_runtime import GateRuntime
 from .htx_runtime import HtxRuntime
 from .okx_runtime import OkxRuntime
@@ -18,7 +18,8 @@ from .protocols import (
     SubscribableWsClient,
 )
 from .realtime_scanner import RealtimeScanner
-from .recovery import RecoveryPlan, WorkflowRecovery
+from .recovery import WorkflowRecovery
+from .schemas import ActiveCrossExchangeArb, ActiveFundingArb, CrossExchangeOpportunity, RecoveryPlan, WorkflowStateRecord
 from .snapshots import SnapshotService
 from .smoke import SmokeResult, SmokeRunner
 from .streaming import PrivateSessionService, PublicStreamService
@@ -41,6 +42,7 @@ __all__ = [
     "PublicStreamService",
     "ActiveFundingArb",
     "ActiveCrossExchangeArb",
+    "CrossExchangeOpportunity",
     "RecoveryPlan",
     "RealtimeScanner",
     "ScanTarget",
@@ -52,5 +54,6 @@ __all__ = [
     "RuntimeSupervisor",
     "SubscribableWsClient",
     "SupervisorState",
+    "WorkflowStateRecord",
     "WorkflowRecovery",
 ]

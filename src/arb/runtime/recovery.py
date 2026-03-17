@@ -2,20 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
-
 from arb.models import MarketType
-from arb.portfolio.reconciler import PortfolioReconciler, ReconciliationReport
+from arb.portfolio.reconciler import PortfolioReconciler
+from arb.runtime.schemas import RecoveryPlan, WorkflowStateRecord
 from arb.storage.repository import Repository
-
-
-@dataclass(slots=True)
-class RecoveryPlan:
-    workflows: list[dict[str, Any]]
-    reconciliation: ReconciliationReport
-    exchange_positions: list[Any] = field(default_factory=list)
-    exchange_orders: list[Any] = field(default_factory=list)
 
 
 class WorkflowRecovery:
@@ -32,7 +22,7 @@ class WorkflowRecovery:
 
     async def recover(
         self,
-        client: Any,
+        client: object,
         *,
         exchange: str,
         market_type: MarketType = MarketType.PERPETUAL,
@@ -40,7 +30,7 @@ class WorkflowRecovery:
         workflow_statuses: tuple[str, ...] = ("pending", "running", "closing"),
     ) -> RecoveryPlan:
         workflows = [
-            workflow
+            WorkflowStateRecord.model_validate(workflow)
             for workflow in self.repository.list_workflow_states(statuses=workflow_statuses)
             if workflow["exchange"] == exchange and (symbol is None or workflow["symbol"] == symbol)
         ]
@@ -58,8 +48,8 @@ class WorkflowRecovery:
             and order["market_type"] == market_type.value
             and (symbol is None or order["symbol"] == symbol)
         ]
-        exchange_positions = list(await client.fetch_positions(market_type, symbol=symbol))
-        exchange_orders = list(await client.fetch_open_orders(symbol=symbol, market_type=market_type))
+        exchange_positions = list(await client.fetch_positions(market_type, symbol=symbol))  # type: ignore[attr-defined]
+        exchange_orders = list(await client.fetch_open_orders(symbol=symbol, market_type=market_type))  # type: ignore[attr-defined]
         reconciliation = self.reconciler.reconcile(
             local_positions=local_positions,
             exchange_positions=exchange_positions,

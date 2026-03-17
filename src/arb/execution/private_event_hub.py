@@ -4,34 +4,106 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable
-from typing import Any
+
+from pydantic import Field
+
+from arb.market.schemas import NormalizedWsEvent
+from arb.schemas.base import ArbFrozenModel, SerializableValue
+
+
+class OrderUpdatePayload(ArbFrozenModel):
+    exchange: str | None = None
+    symbol: str
+    order_id: str
+    status: str | None = None
+    side: str | None = None
+    quantity: str | None = None
+    filled_quantity: str | None = None
+    raw: dict[str, SerializableValue] = Field(default_factory=dict)
+
+
+class FillUpdatePayload(ArbFrozenModel):
+    exchange: str | None = None
+    symbol: str
+    order_id: str
+    fill_id: str
+    side: str | None = None
+    quantity: str | None = None
+    price: str | None = None
+    raw: dict[str, SerializableValue] = Field(default_factory=dict)
+
+
+class PositionUpdatePayload(ArbFrozenModel):
+    exchange: str | None = None
+    symbol: str
+    quantity: str | None = None
+    direction: str | None = None
+    raw: dict[str, SerializableValue] = Field(default_factory=dict)
 
 
 class PrivateEventHub:
     """Buffer normalized private events keyed by order and symbol."""
 
     def __init__(self) -> None:
-        self._orders: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        self._fills: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        self._positions: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        self._orders: dict[str, list[OrderUpdatePayload]] = defaultdict(list)
+        self._fills: dict[str, list[FillUpdatePayload]] = defaultdict(list)
+        self._positions: dict[str, list[PositionUpdatePayload]] = defaultdict(list)
 
-    def publish(self, event: dict[str, Any]) -> None:
-        channel = str(event.get("channel", ""))
-        payload = dict(event.get("payload", {}))
-        if event.get("exchange") is not None and "exchange" not in payload:
-            payload["exchange"] = event["exchange"]
-        if channel == "order.update" and payload.get("order_id") is not None:
-            self._orders[str(payload["order_id"])].append(payload)
-        elif channel == "fill.update" and payload.get("order_id") is not None:
-            self._fills[str(payload["order_id"])].append(payload)
-        elif channel == "position.update" and payload.get("symbol") is not None:
-            self._positions[str(payload["symbol"])].append(payload)
+    def publish(self, event: NormalizedWsEvent | dict[str, object]) -> None:
+        normalized = (
+            event
+            if isinstance(event, NormalizedWsEvent)
+            else NormalizedWsEvent.model_validate(event)
+        )
+        payload = dict(normalized.payload)
+        if normalized.exchange and "exchange" not in payload:
+            payload["exchange"] = normalized.exchange
 
-    def publish_many(self, events: Iterable[dict[str, Any]]) -> None:
+        if normalized.channel == "order.update" and payload.get("order_id") is not None:
+            order_payload = OrderUpdatePayload.model_validate(
+                {
+                    "exchange": payload.get("exchange"),
+                    "symbol": payload["symbol"],
+                    "order_id": payload["order_id"],
+                    "status": payload.get("status"),
+                    "side": payload.get("side"),
+                    "quantity": payload.get("quantity"),
+                    "filled_quantity": payload.get("filled_quantity"),
+                    "raw": payload,
+                }
+            )
+            self._orders[order_payload.order_id].append(order_payload)
+        elif normalized.channel == "fill.update" and payload.get("order_id") is not None:
+            fill_payload = FillUpdatePayload.model_validate(
+                {
+                    "exchange": payload.get("exchange"),
+                    "symbol": payload["symbol"],
+                    "order_id": payload["order_id"],
+                    "fill_id": payload["fill_id"],
+                    "side": payload.get("side"),
+                    "quantity": payload.get("quantity"),
+                    "price": payload.get("price"),
+                    "raw": payload,
+                }
+            )
+            self._fills[fill_payload.order_id].append(fill_payload)
+        elif normalized.channel == "position.update" and payload.get("symbol") is not None:
+            position_payload = PositionUpdatePayload.model_validate(
+                {
+                    "exchange": payload.get("exchange"),
+                    "symbol": payload["symbol"],
+                    "quantity": payload.get("quantity"),
+                    "direction": payload.get("direction"),
+                    "raw": payload,
+                }
+            )
+            self._positions[position_payload.symbol].append(position_payload)
+
+    def publish_many(self, events: Iterable[NormalizedWsEvent | dict[str, object]]) -> None:
         for event in events:
             self.publish(event)
 
-    def pop_order(self, order_id: str) -> dict[str, Any] | None:
+    def pop_order(self, order_id: str) -> OrderUpdatePayload | None:
         queue = self._orders.get(order_id)
         if not queue:
             return None
@@ -40,10 +112,10 @@ class PrivateEventHub:
             self._orders.pop(order_id, None)
         return payload
 
-    def drain_fills(self, order_id: str) -> list[dict[str, Any]]:
+    def drain_fills(self, order_id: str) -> list[FillUpdatePayload]:
         return self._fills.pop(order_id, [])
 
-    def latest_position(self, symbol: str) -> dict[str, Any] | None:
+    def latest_position(self, symbol: str) -> PositionUpdatePayload | None:
         queue = self._positions.get(symbol)
         if not queue:
             return None

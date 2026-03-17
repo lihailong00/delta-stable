@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
 
+from arb.execution.executor import ExecutionResult
+from arb.market.schemas import MarketSnapshot, coerce_market_snapshot
 from arb.models import MarketType, Position, PositionDirection
 from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
 from arb.runtime.pipeline import OpportunityPipeline
+from arb.runtime.schemas import ActiveCrossExchangeArb, CrossExchangeOpportunity
 from arb.strategy.engine import StrategyAction, StrategyState
 from arb.strategy.perp_spread import PerpSpreadInputs, PerpSpreadStrategy
 from arb.workflows.close_position import CrossExchangeCloseRequest, ClosePositionResult, ClosePositionWorkflow
@@ -18,29 +19,6 @@ from arb.workflows.open_position import CrossExchangeOpenRequest, OpenPositionRe
 
 def _utc_now() -> datetime:
     return datetime.now(tz=timezone.utc)
-
-
-@dataclass(slots=True, frozen=True)
-class CrossExchangeOpportunity:
-    symbol: str
-    long_exchange: str
-    short_exchange: str
-    spread_rate: Decimal
-    long_price: Decimal
-    short_price: Decimal
-
-
-@dataclass(slots=True)
-class ActiveCrossExchangeArb:
-    workflow_id: str
-    symbol: str
-    long_exchange: str
-    short_exchange: str
-    quantity: Decimal
-    long_quantity: Decimal
-    short_quantity: Decimal
-    opened_at: datetime
-    state: StrategyState = field(default_factory=StrategyState)
 
 
 class CrossExchangeFundingService:
@@ -73,9 +51,9 @@ class CrossExchangeFundingService:
         targets: list[ScanTarget],
         *,
         now: datetime | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         current_time = now or _utc_now()
-        snapshots = await self.manager.collect_snapshots(targets)
+        snapshots = [coerce_market_snapshot(snapshot) for snapshot in await self.manager.collect_snapshots(targets)]
         snapshot_index = self._snapshot_index(snapshots)
 
         closed: list[ClosePositionResult] = []
@@ -89,10 +67,10 @@ class CrossExchangeFundingService:
                     symbol=position.symbol,
                     long_exchange=position.long_exchange,
                     short_exchange=position.short_exchange,
-                    long_funding_rate=Decimal(str(long_snapshot["funding"]["rate"])),
-                    short_funding_rate=Decimal(str(short_snapshot["funding"]["rate"])),
-                    long_price=Decimal(str(long_snapshot["ticker"]["ask"])),
-                    short_price=Decimal(str(short_snapshot["ticker"]["bid"])),
+                    long_funding_rate=long_snapshot.funding.rate if long_snapshot.funding is not None else Decimal("0"),
+                    short_funding_rate=short_snapshot.funding.rate if short_snapshot.funding is not None else Decimal("0"),
+                    long_price=long_snapshot.ticker.ask,
+                    short_price=short_snapshot.ticker.bid,
                     long_quantity=position.long_quantity,
                     short_quantity=position.short_quantity,
                 ),
@@ -191,8 +169,8 @@ class CrossExchangeFundingService:
     async def _close_position(
         self,
         position: ActiveCrossExchangeArb,
-        long_snapshot: dict[str, Any],
-        short_snapshot: dict[str, Any],
+        long_snapshot: MarketSnapshot,
+        short_snapshot: MarketSnapshot,
         *,
         reason: str,
     ) -> ClosePositionResult:
@@ -211,8 +189,8 @@ class CrossExchangeFundingService:
                 short_exchange=position.short_exchange,
                 long_quantity=position.long_quantity,
                 short_quantity=position.short_quantity,
-                long_price=Decimal(str(long_snapshot["ticker"]["bid"])),
-                short_price=Decimal(str(short_snapshot["ticker"]["ask"])),
+                long_price=long_snapshot.ticker.bid,
+                short_price=short_snapshot.ticker.ask,
                 venue_clients=self.venues,
                 close_reason=reason,
                 max_slippage_bps=Decimal("10"),
@@ -234,39 +212,43 @@ class CrossExchangeFundingService:
                     long_exchange=position.long_exchange,
                     short_exchange=position.short_exchange,
                     spread_rate=Decimal("0"),
-                    long_price=Decimal(str(long_snapshot["ticker"]["bid"])),
-                    short_price=Decimal(str(short_snapshot["ticker"]["ask"])),
+                    long_price=long_snapshot.ticker.bid,
+                    short_price=short_snapshot.ticker.ask,
                 ),
-                long_price=Decimal(str(long_snapshot["ticker"]["bid"])),
-                short_price=Decimal(str(short_snapshot["ticker"]["ask"])),
+                long_price=long_snapshot.ticker.bid,
+                short_price=short_snapshot.ticker.ask,
                 closed=True,
             )
         return result
 
-    def _opportunities(self, snapshots: list[dict[str, Any]]) -> list[CrossExchangeOpportunity]:
-        by_symbol: dict[str, list[dict[str, Any]]] = {}
+    def _opportunities(self, snapshots: list[MarketSnapshot]) -> list[CrossExchangeOpportunity]:
+        by_symbol: dict[str, list[MarketSnapshot]] = {}
         for snapshot in snapshots:
-            funding = snapshot.get("funding")
+            funding = snapshot.funding
             if funding is None:
                 continue
-            by_symbol.setdefault(str(funding["symbol"]), []).append(snapshot)
+            by_symbol.setdefault(funding.symbol, []).append(snapshot)
 
         opportunities: list[CrossExchangeOpportunity] = []
         for symbol, items in by_symbol.items():
             for long_snapshot in items:
                 for short_snapshot in items:
-                    long_exchange = str(long_snapshot["funding"]["exchange"])
-                    short_exchange = str(short_snapshot["funding"]["exchange"])
+                    long_funding = long_snapshot.funding
+                    short_funding = short_snapshot.funding
+                    if long_funding is None or short_funding is None:
+                        continue
+                    long_exchange = long_funding.exchange
+                    short_exchange = short_funding.exchange
                     if long_exchange == short_exchange:
                         continue
                     inputs = PerpSpreadInputs(
                         symbol=symbol,
                         long_exchange=long_exchange,
                         short_exchange=short_exchange,
-                        long_funding_rate=Decimal(str(long_snapshot["funding"]["rate"])),
-                        short_funding_rate=Decimal(str(short_snapshot["funding"]["rate"])),
-                        long_price=Decimal(str(long_snapshot["ticker"]["ask"])),
-                        short_price=Decimal(str(short_snapshot["ticker"]["bid"])),
+                        long_funding_rate=long_funding.rate,
+                        short_funding_rate=short_funding.rate,
+                        long_price=long_snapshot.ticker.ask,
+                        short_price=short_snapshot.ticker.bid,
                     )
                     decision = self.strategy.evaluate(inputs)
                     if decision.action is not StrategyAction.OPEN:
@@ -284,13 +266,13 @@ class CrossExchangeFundingService:
         opportunities.sort(key=lambda item: item.spread_rate, reverse=True)
         return opportunities
 
-    def _snapshot_index(self, snapshots: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
-        indexed: dict[tuple[str, str], dict[str, Any]] = {}
+    def _snapshot_index(self, snapshots: list[MarketSnapshot]) -> dict[tuple[str, str], MarketSnapshot]:
+        indexed: dict[tuple[str, str], MarketSnapshot] = {}
         for snapshot in snapshots:
-            funding = snapshot.get("funding")
+            funding = snapshot.funding
             if funding is None:
                 continue
-            indexed[(str(funding["exchange"]), str(funding["symbol"]))] = snapshot
+            indexed[(funding.exchange, funding.symbol)] = snapshot
         return indexed
 
     def _workflow_id(self, long_exchange: str, short_exchange: str, symbol: str) -> str:
@@ -301,12 +283,12 @@ class CrossExchangeFundingService:
             return self.position_quantity
         return Decimal(str(result.execution.orders[index].filled_quantity or self.position_quantity))
 
-    def _persist_execution(self, execution: Any) -> None:
-        for order in getattr(execution, "orders", []):
+    def _persist_execution(self, execution: ExecutionResult) -> None:
+        for order in execution.orders:
             self.pipeline.record_order(order)
-        for order in getattr(execution, "adjustments", []):
+        for order in execution.adjustments:
             self.pipeline.record_order(order)
-        for fill in getattr(execution, "fills", []):
+        for fill in execution.fills:
             self.pipeline.record_fill(fill)
 
     def _persist_positions(

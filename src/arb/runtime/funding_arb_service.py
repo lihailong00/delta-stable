@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
 
+from arb.execution.executor import ExecutionResult
 from arb.execution.router import RouteDecision
+from arb.market.schemas import MarketSnapshot, coerce_market_snapshot
 from arb.models import MarketType, Position, PositionDirection
 from arb.risk.position_monitor import PositionMonitor
 from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
 from arb.runtime.pipeline import OpportunityPipeline
 from arb.runtime.realtime_scanner import RealtimeScanner
+from arb.runtime.schemas import ActiveFundingArb
 from arb.scanner.funding_scanner import FundingOpportunity
 from arb.strategy.engine import StrategyAction, StrategyState
 from arb.strategy.spot_perp import SpotPerpInputs, SpotPerpStrategy
@@ -22,20 +23,6 @@ from arb.workflows.open_position import OpenPositionRequest, OpenPositionResult,
 
 def _utc_now() -> datetime:
     return datetime.now(tz=timezone.utc)
-
-
-@dataclass(slots=True)
-class ActiveFundingArb:
-    workflow_id: str
-    exchange: str
-    symbol: str
-    quantity: Decimal
-    spot_quantity: Decimal
-    perp_quantity: Decimal
-    opened_at: datetime
-    liquidation_price: Decimal | None = None
-    route: RouteDecision | None = None
-    state: StrategyState = field(default_factory=StrategyState)
 
 
 class FundingArbService:
@@ -73,10 +60,10 @@ class FundingArbService:
         *,
         dry_run: bool = False,
         now: datetime | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         current_time = now or _utc_now()
         scan_result = await self.scanner.scan_once(targets, dry_run=dry_run)
-        snapshots = scan_result["snapshots"]
+        snapshots = [coerce_market_snapshot(snapshot) for snapshot in scan_result["snapshots"]]
         opportunities = scan_result["opportunities"]
         snapshot_index = self._snapshot_index(snapshots)
 
@@ -106,9 +93,9 @@ class FundingArbService:
             decision = self.strategy.evaluate(
                 SpotPerpInputs(
                     symbol=position.symbol,
-                    funding_rate=Decimal(str(snapshot["funding"]["rate"])),
-                    spot_price=Decimal(str(snapshot.get("view", {}).get("spot_ticker", snapshot["ticker"]).get("ask"))),
-                    perp_price=Decimal(str(snapshot.get("view", {}).get("perp_ticker", snapshot["ticker"]).get("bid"))),
+                    funding_rate=snapshot.funding.rate if snapshot.funding is not None else Decimal("0"),
+                    spot_price=snapshot.ticker.ask,
+                    perp_price=snapshot.ticker.bid,
                     spot_quantity=position.spot_quantity,
                     perp_quantity=position.perp_quantity,
                 ),
@@ -170,7 +157,7 @@ class FundingArbService:
     async def _open_position(
         self,
         opportunity: FundingOpportunity,
-        snapshot: dict[str, Any],
+        snapshot: MarketSnapshot,
         now: datetime,
     ) -> OpenPositionResult:
         workflow_id = self._key(opportunity.exchange, opportunity.symbol)
@@ -187,8 +174,8 @@ class FundingArbService:
                 symbol=opportunity.symbol,
                 quantity=self.position_quantity,
                 funding_rate=opportunity.gross_rate,
-                spot_price=Decimal(str(snapshot["ticker"]["ask"])),
-                perp_price=Decimal(str(snapshot["ticker"]["bid"])),
+                spot_price=snapshot.ticker.ask,
+                perp_price=snapshot.ticker.bid,
                 venue_clients={opportunity.exchange: self.venues[opportunity.exchange]},
                 preferred_exchange=opportunity.exchange,
                 maker_fee_rate=Decimal("0"),
@@ -211,8 +198,8 @@ class FundingArbService:
                 exchange=opportunity.exchange,
                 symbol=opportunity.symbol,
                 quantity=self.position_quantity,
-                spot_entry=Decimal(str(snapshot["ticker"]["ask"])),
-                perp_entry=Decimal(str(snapshot["ticker"]["bid"])),
+                spot_entry=snapshot.ticker.ask,
+                perp_entry=snapshot.ticker.bid,
                 closed=False,
             )
         return result
@@ -220,7 +207,7 @@ class FundingArbService:
     async def _close_position(
         self,
         position: ActiveFundingArb,
-        snapshot: dict[str, Any],
+        snapshot: MarketSnapshot,
         *,
         reason: str,
     ) -> ClosePositionResult:
@@ -237,11 +224,11 @@ class FundingArbService:
                 symbol=position.symbol,
                 spot_quantity=position.spot_quantity,
                 perp_quantity=position.perp_quantity,
-                spot_price=Decimal(str(snapshot["ticker"]["bid"])),
-                perp_price=Decimal(str(snapshot["ticker"]["ask"])),
+                spot_price=snapshot.ticker.bid,
+                perp_price=snapshot.ticker.ask,
                 venue_clients={position.exchange: self.venues[position.exchange]},
                 preferred_exchange=position.exchange,
-                funding_rate=Decimal(str(snapshot["funding"]["rate"])),
+                funding_rate=snapshot.funding.rate if snapshot.funding is not None else Decimal("0"),
                 min_expected_rate=self.strategy.close_funding_rate,
                 opened_at=position.opened_at,
                 max_holding_period=self.strategy.max_holding_period,
@@ -266,8 +253,8 @@ class FundingArbService:
                 exchange=position.exchange,
                 symbol=position.symbol,
                 quantity=max(position.spot_quantity, position.perp_quantity),
-                spot_entry=Decimal(str(snapshot["ticker"]["bid"])),
-                perp_entry=Decimal(str(snapshot["ticker"]["ask"])),
+                spot_entry=snapshot.ticker.bid,
+                perp_entry=snapshot.ticker.ask,
                 closed=True,
             )
         return result
@@ -275,21 +262,21 @@ class FundingArbService:
     def _key(self, exchange: str, symbol: str) -> str:
         return f"{self.strategy_name}:{exchange}:{symbol}"
 
-    def _snapshot_index(self, snapshots: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
-        indexed: dict[tuple[str, str], dict[str, Any]] = {}
+    def _snapshot_index(self, snapshots: list[MarketSnapshot]) -> dict[tuple[str, str], MarketSnapshot]:
+        indexed: dict[tuple[str, str], MarketSnapshot] = {}
         for snapshot in snapshots:
-            funding = snapshot.get("funding")
+            funding = snapshot.funding
             if funding is None:
                 continue
-            indexed[(str(funding["exchange"]), str(funding["symbol"]))] = snapshot
+            indexed[(funding.exchange, funding.symbol)] = snapshot
         return indexed
 
-    def _persist_execution(self, execution: Any) -> None:
-        for order in getattr(execution, "orders", []):
+    def _persist_execution(self, execution: ExecutionResult) -> None:
+        for order in execution.orders:
             self.pipeline.record_order(order)
-        for order in getattr(execution, "adjustments", []):
+        for order in execution.adjustments:
             self.pipeline.record_order(order)
-        for fill in getattr(execution, "fills", []):
+        for fill in execution.fills:
             self.pipeline.record_fill(fill)
 
     def _persist_position_pair(
