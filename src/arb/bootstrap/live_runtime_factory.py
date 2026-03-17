@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from collections.abc import Callable, Mapping
 
 from arb.config.live import LiveRuntimeConfig
 from arb.models import MarketType
 from arb.net.http import HttpTransport
+from arb.net.ws import Connector
 from arb.runtime import BinanceRuntime, BitgetRuntime, BybitRuntime, GateRuntime, HtxRuntime, OkxRuntime
 from arb.settings.exchanges import ExchangeAccountConfig, ExchangeEndpointConfig, ExchangeSettings
 
+type BuiltRuntime = BinanceRuntime | OkxRuntime | BybitRuntime | GateRuntime | BitgetRuntime | HtxRuntime
+
 HttpTransportFactory = Callable[[str], HttpTransport]
-WsConnectorFactory = Callable[[str], Any]
+WsConnectorFactory = Callable[[str], Connector | None]
 
 
 @dataclass(slots=True, frozen=True)
@@ -40,8 +43,8 @@ class LiveRuntimeFactory:
         self.http_transport_factory = http_transport_factory or (lambda _: HttpTransport())
         self.ws_connector_factory = ws_connector_factory or (lambda _: None)
 
-    def build_all(self, *, market_type: MarketType = MarketType.PERPETUAL) -> dict[str, Any]:
-        runtimes: dict[str, Any] = {}
+    def build_all(self, *, market_type: MarketType = MarketType.PERPETUAL) -> dict[str, BuiltRuntime]:
+        runtimes: dict[str, BuiltRuntime] = {}
         for name, account in self.settings.enabled_accounts().items():
             runtimes[name] = self.build_one(name, account, market_type=market_type)
         return runtimes
@@ -52,7 +55,7 @@ class LiveRuntimeFactory:
         account: ExchangeAccountConfig | None = None,
         *,
         market_type: MarketType = MarketType.PERPETUAL,
-    ) -> Any:
+    ) -> BuiltRuntime:
         config = account or self.settings.exchanges[exchange]
         if not config.enabled:
             raise ValueError(f"exchange {exchange} is disabled")
@@ -139,7 +142,7 @@ class LiveRuntimeFactory:
 
     def _apply_endpoints(
         self,
-        runtime: Any,
+        runtime: BuiltRuntime,
         *,
         exchange: str,
         selection: RuntimeEndpointSelection,
@@ -178,7 +181,7 @@ def build_live_runtimes(
     market_type: MarketType = MarketType.PERPETUAL,
     http_transport_factory: HttpTransportFactory | None = None,
     ws_connector_factory: WsConnectorFactory | None = None,
-) -> dict[str, Any]:
+) -> dict[str, BuiltRuntime]:
     factory = LiveRuntimeFactory(
         settings=settings,
         config=config or LiveRuntimeConfig.from_env(env),
@@ -203,5 +206,5 @@ def resolve_runtime_endpoints(
 
 
 class _NullHttpClient:
-    async def request(self, *_args: Any, **_kwargs: Any) -> Any:
+    async def request(self, *_args: object, **_kwargs: object) -> object:
         raise AssertionError("test helper http client should not be used for network requests")

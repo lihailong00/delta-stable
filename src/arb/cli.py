@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections.abc import Sequence
-from typing import Any
+
+from arb.bootstrap.schemas import CliParsedResult, CliResult, CommandHandlerMap, namespace_to_serializable
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,8 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(
     argv: Sequence[str] | None = None,
     *,
-    handlers: dict[str, Any] | None = None,
-) -> dict[str, object] | Any:
+    handlers: CommandHandlerMap | None = None,
+) -> CliResult:
     parser = build_parser()
     args = parser.parse_args(argv)
     if handlers and args.command in handlers:
@@ -65,7 +66,7 @@ def main(
         if asyncio.iscoroutine(result):
             return asyncio.run(result)
         return result
-    return {"command": args.command, "args": vars(args)}
+    return CliParsedResult(command=args.command, args=namespace_to_serializable(args))
 
 
 if __name__ == "__main__":

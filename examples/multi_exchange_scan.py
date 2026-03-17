@@ -10,7 +10,9 @@ import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from arb.market.schemas import MarketSnapshot
 from arb.models import MarketType
+from arb.models import FundingRate, Ticker
 from arb.monitoring.metrics import MetricsRegistry
 from arb.runtime import LiveExchangeManager, OpportunityPipeline, RealtimeScanner, ScanTarget
 from arb.scanner.funding_scanner import FundingScanner
@@ -25,28 +27,28 @@ class _StaticRuntime:
     async def public_ping(self) -> bool:
         return True
 
-    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> dict[str, object]:
+    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> MarketSnapshot:
         ts = datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat()
-        return {
-            "ticker": {
-                "exchange": self.exchange,
-                "symbol": symbol,
-                "market_type": market_type.value,
-                "bid": "100.0",
-                "ask": "100.3",
-                "last": "100.15",
-                "ts": ts,
-            },
-            "funding": {
-                "exchange": self.exchange,
-                "symbol": symbol,
-                "rate": self.rate,
-                "predicted_rate": self.rate,
-                "next_funding_time": datetime(2026, 1, 1, 8, tzinfo=timezone.utc).isoformat(),
-                "ts": ts,
-            },
-            "liquidity_usd": self.liquidity_usd,
-        }
+        return MarketSnapshot(
+            ticker=Ticker(
+                exchange=self.exchange,
+                symbol=symbol,
+                market_type=market_type,
+                bid=Decimal("100.0"),
+                ask=Decimal("100.3"),
+                last=Decimal("100.15"),
+                ts=ts,
+            ),
+            funding=FundingRate(
+                exchange=self.exchange,
+                symbol=symbol,
+                rate=Decimal(self.rate),
+                predicted_rate=Decimal(self.rate),
+                next_funding_time=datetime(2026, 1, 1, 8, tzinfo=timezone.utc),
+                ts=ts,
+            ),
+            liquidity_usd=Decimal(self.liquidity_usd),
+        )
 
 
 async def main() -> None:

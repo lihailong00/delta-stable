@@ -1,12 +1,13 @@
 from __future__ import annotations
 import pytest
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from decimal import Decimal
 import sys
 from pathlib import Path
 pytestmark = pytest.mark.asyncio
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
+from arb.market.schemas import MarketSnapshot
 from arb.models import MarketType
 from arb.monitoring.alerts import AlertManager
 from arb.monitoring.health import HealthChecker
@@ -16,10 +17,8 @@ from arb.runtime.pipeline import OpportunityPipeline
 from arb.runtime.protocols import SnapshotRuntimeProtocol
 from arb.runtime.realtime_scanner import RealtimeScanner
 from arb.scanner.funding_scanner import FundingOpportunity, FundingScanner
+from tests.factories import build_market_snapshot
 
-def _snapshot(exchange: str, symbol: str, rate: str='0.0005') -> dict[str, object]:
-    ts = datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat()
-    return {'ticker': {'exchange': exchange, 'symbol': symbol, 'market_type': 'perpetual', 'bid': '100.0', 'ask': '101.0', 'last': '100.5', 'ts': ts}, 'funding': {'exchange': exchange, 'symbol': symbol, 'rate': rate, 'predicted_rate': rate, 'next_funding_time': datetime(2026, 1, 1, 8, tzinfo=timezone.utc).isoformat(), 'ts': ts}, 'top_ask_size': '12'}
 
 class _BarrierRuntime:
 
@@ -31,10 +30,10 @@ class _BarrierRuntime:
     async def public_ping(self) -> bool:
         return True
 
-    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> dict[str, object]:
+    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> MarketSnapshot:
         self.start_event.set()
         await asyncio.wait_for(self.other_event.wait(), timeout=0.2)
-        return _snapshot(self.name, symbol)
+        return build_market_snapshot(self.name, symbol, ask="101.0", last="100.5", top_ask_size="12")
 
 class _FlakyRuntime:
 
@@ -44,19 +43,19 @@ class _FlakyRuntime:
     async def public_ping(self) -> bool:
         return True
 
-    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> dict[str, object]:
+    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> MarketSnapshot:
         self.calls += 1
         if self.calls == 1:
             raise RuntimeError('temporary disconnect')
-        return _snapshot('binance', symbol)
+        return build_market_snapshot('binance', symbol, ask="101.0", last="100.5", top_ask_size="12")
 
 class _StaticRuntime:
 
     async def public_ping(self) -> bool:
         return True
 
-    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> dict[str, object]:
-        return _snapshot('binance', symbol)
+    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> MarketSnapshot:
+        return build_market_snapshot('binance', symbol, ask="101.0", last="100.5", top_ask_size="12")
 
 class _MemoryRepository:
 

@@ -7,14 +7,17 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
+from arb.bootstrap.schemas import CommandHandlerMap, FundingArbCliArgs, FundingArbRunReport, to_serializable
 from arb.control import ApiContext, CommandDispatcher, ControlAPI, ControlCommand
+from arb.control.schemas import CommandRequest, CommandResponse, PositionResponse, StrategyResponse, WorkflowResponse
 from arb.execution import OrderTracker, PairExecutor
 from arb.models import MarketType
 from arb.runtime import FundingArbService, LiveExchangeManager, OpportunityPipeline, RealtimeScanner, ScanTarget
+from arb.runtime.protocols import LiveRuntimeProtocol
 from arb.scanner.funding_scanner import FundingScanner
+from arb.schemas.base import SerializableValue
 from arb.storage import Database, Repository
 from arb.workflows import ClosePositionWorkflow, OpenPositionWorkflow, VenueClients
 
@@ -34,20 +37,29 @@ class FundingArbApp:
     dispatcher: CommandDispatcher
     control_api: ControlAPI
 
-    async def run_funding_arb(self, args: Any, *, dry_run: bool) -> dict[str, Any]:
-        market_type = MarketType(str(getattr(args, "market_type", "perpetual")))
+    async def run_funding_arb(
+        self,
+        args: FundingArbCliArgs | object,
+        *,
+        dry_run: bool,
+    ) -> FundingArbRunReport:
+        cli_args = args if isinstance(args, FundingArbCliArgs) else FundingArbCliArgs.from_namespace(args)
+        market_type = MarketType(cli_args.market_type)
         targets = [
             ScanTarget(exchange, symbol, market_type)
-            for exchange in getattr(args, "exchange")
-            for symbol in getattr(args, "symbol")
+            for exchange in cli_args.exchange
+            for symbol in cli_args.symbol
         ]
-        iterations = int(getattr(args, "iterations", 1))
-        results: list[dict[str, Any]] = []
+        iterations = cli_args.iterations
+        results: list[dict[str, SerializableValue]] = []
         for _ in range(iterations):
-            results.append(await self.service.run_once(targets, dry_run=dry_run))
-        return {"iterations": iterations, "results": results}
+            serialized = to_serializable(await self.service.run_once(targets, dry_run=dry_run))
+            if not isinstance(serialized, dict):
+                raise TypeError("funding arb service results must serialize to a mapping")
+            results.append(serialized)
+        return FundingArbRunReport(iterations=iterations, results=results)
 
-    def cli_handlers(self) -> dict[str, Any]:
+    def cli_handlers(self) -> CommandHandlerMap:
         return {
             "funding-arb": lambda args: self.run_funding_arb(args, dry_run=False),
             "funding-arb-dry-run": lambda args: self.run_funding_arb(args, dry_run=True),
@@ -56,7 +68,7 @@ class FundingArbApp:
 
 def build_funding_arb_app(
     *,
-    runtimes: Mapping[str, Any],
+    runtimes: Mapping[str, LiveRuntimeProtocol],
     venues: Mapping[str, VenueClients],
     repository: Repository | None = None,
     database_path: str | Path | None = None,
@@ -88,7 +100,7 @@ def build_funding_arb_app(
     )
     context = ApiContext(
         positions_provider=lambda: _positions_payload(service),
-        strategies_provider=lambda: [{"name": service.strategy_name, "status": _status_name(service)}],
+        strategies_provider=lambda: [StrategyResponse(name=service.strategy_name, status=_status_name(service))],
         orders_provider=(repository.list_orders if repository is not None else (lambda: [])),
         workflows_provider=(
             repository.list_workflow_states
@@ -115,49 +127,44 @@ async def _noop_sleep(_: float) -> None:
     return None
 
 
-def _positions_payload(service: FundingArbService) -> list[dict[str, Any]]:
+def _positions_payload(service: FundingArbService) -> list[PositionResponse]:
     return [
-        {
-            "exchange": position.exchange,
-            "symbol": position.symbol,
-            "market_type": MarketType.PERPETUAL.value,
-            "quantity": str(position.quantity),
-            "direction": "hedged",
-        }
+        PositionResponse(
+            exchange=position.exchange,
+            symbol=position.symbol,
+            market_type=MarketType.PERPETUAL.value,
+            quantity=str(position.quantity),
+            direction="hedged",
+        )
         for position in service.active_positions.values()
     ]
 
 
-def _workflows_payload(service: FundingArbService) -> list[dict[str, Any]]:
+def _workflows_payload(service: FundingArbService) -> list[WorkflowResponse]:
     return [
-        {
-            "workflow_id": position.workflow_id,
-            "workflow_type": service.strategy_name,
-            "exchange": position.exchange,
-            "symbol": position.symbol,
-            "status": "open",
-            "payload": {"opened_at": position.opened_at.isoformat()},
-        }
+        WorkflowResponse(
+            workflow_id=position.workflow_id,
+            workflow_type=service.strategy_name,
+            exchange=position.exchange,
+            symbol=position.symbol,
+            status="open",
+            payload={"opened_at": position.opened_at.isoformat()},
+        )
         for position in service.active_positions.values()
     ]
 
 
-def _command_from_payload(payload: Mapping[str, Any]) -> ControlCommand:
+def _command_from_payload(payload: CommandRequest | Mapping[str, SerializableValue]) -> ControlCommand:
+    request = payload if isinstance(payload, CommandRequest) else CommandRequest.model_validate(payload)
     return ControlCommand(
-        command_id=str(payload.get("command_id", uuid4())),
-        action=str(payload["action"]),
-        target=str(payload["target"]),
-        requested_by=str(payload["requested_by"]),
-        require_confirmation=bool(payload.get("require_confirmation", False)),
-        payload=dict(payload.get("payload", {})),
+        command_id=str(uuid4()),
+        action=request.action,
+        target=request.target,
+        requested_by=request.requested_by,
+        require_confirmation=request.require_confirmation,
+        payload=request.payload,
     )
 
 
-def _default_command_handler(command: ControlCommand) -> dict[str, Any]:
-    return {
-        "accepted": True,
-        "status": "queued",
-        "command_id": command.command_id,
-        "action": command.action,
-        "target": command.target,
-    }
+def _default_command_handler(command: ControlCommand) -> CommandResponse:
+    return CommandResponse(accepted=True, status="queued", command_id=command.command_id)

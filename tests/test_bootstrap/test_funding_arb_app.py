@@ -3,7 +3,6 @@ from __future__ import annotations
 import sys
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -12,43 +11,21 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from arb.bootstrap import build_funding_arb_app
+from arb.market.schemas import MarketSnapshot
 from arb.models import MarketType, Order, OrderStatus, Side
 from arb.runtime.exchange_manager import ScanTarget
 from arb.workflows import VenueClients
-
-
-def _snapshot(rate: str) -> dict[str, object]:
-    ts = datetime(2026, 3, 17, tzinfo=timezone.utc).isoformat()
-    return {
-        "ticker": {
-            "exchange": "binance",
-            "symbol": "BTC/USDT",
-            "market_type": "perpetual",
-            "bid": "100.0",
-            "ask": "100.2",
-            "last": "100.1",
-            "ts": ts,
-        },
-        "funding": {
-            "exchange": "binance",
-            "symbol": "BTC/USDT",
-            "rate": rate,
-            "predicted_rate": rate,
-            "next_funding_time": datetime(2026, 3, 17, 8, tzinfo=timezone.utc).isoformat(),
-            "ts": ts,
-        },
-        "top_ask_size": "10",
-    }
+from tests.factories import build_market_snapshot
 
 
 @dataclass
 class _SequenceRuntime:
-    snapshots: list[dict[str, object]]
+    snapshots: list[MarketSnapshot]
 
     async def public_ping(self) -> bool:
         return True
 
-    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> dict[str, object]:
+    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> MarketSnapshot:
         return self.snapshots.pop(0)
 
 
@@ -108,7 +85,12 @@ class TestFundingArbAppBootstrap:
     async def test_build_funding_arb_app_wires_service_repository_and_control_api(self) -> None:
         temp_dir = tempfile.TemporaryDirectory()
         try:
-            runtime = _SequenceRuntime([_snapshot("0.001"), _snapshot("-0.0001")])
+            runtime = _SequenceRuntime(
+                [
+                    build_market_snapshot("binance", "BTC/USDT", rate="0.001"),
+                    build_market_snapshot("binance", "BTC/USDT", rate="-0.0001"),
+                ]
+            )
             spot_client = _Client(
                 orders=[
                     _filled_order("spot-open", MarketType.SPOT, Side.BUY),

@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from arb.execution.executor import PairExecutor
 from arb.execution.order_tracker import OrderTracker
+from arb.market.schemas import MarketSnapshot
 from arb.models import MarketType, Order, OrderStatus, Side
 from arb.runtime.funding_arb_service import ActiveFundingArb
 from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
@@ -20,34 +21,11 @@ from arb.runtime.pipeline import OpportunityPipeline
 from arb.scanner.funding_scanner import FundingOpportunity
 from arb.workflows.close_position import ClosePositionWorkflow
 from arb.workflows.open_position import OpenPositionWorkflow, VenueClients
+from tests.factories import build_market_snapshot
 
 
 async def _sleep(_: float) -> None:
     return None
-
-
-def _snapshot(exchange: str, symbol: str, rate: str) -> dict[str, object]:
-    ts = datetime(2026, 3, 17, tzinfo=timezone.utc).isoformat()
-    return {
-        "ticker": {
-            "exchange": exchange,
-            "symbol": symbol,
-            "market_type": "perpetual",
-            "bid": "100.0",
-            "ask": "100.2",
-            "last": "100.1",
-            "ts": ts,
-        },
-        "funding": {
-            "exchange": exchange,
-            "symbol": symbol,
-            "rate": rate,
-            "predicted_rate": rate,
-            "next_funding_time": datetime(2026, 3, 17, 8, tzinfo=timezone.utc).isoformat(),
-            "ts": ts,
-        },
-        "top_ask_size": "10",
-    }
 
 
 def _opportunity(exchange: str, symbol: str, rate: str) -> FundingOpportunity:
@@ -203,12 +181,12 @@ class TestFundingArbService:
         scanner = _SequenceScanner(
             [
                 {
-                    "snapshots": [_snapshot("binance", "BTC/USDT", "0.001")],
+                    "snapshots": [build_market_snapshot("binance", "BTC/USDT", rate="0.001")],
                     "opportunities": [_opportunity("binance", "BTC/USDT", "0.001")],
                     "output": [],
                 },
                 {
-                    "snapshots": [_snapshot("binance", "BTC/USDT", "-0.0001")],
+                    "snapshots": [build_market_snapshot("binance", "BTC/USDT", rate="-0.0001")],
                     "opportunities": [],
                     "output": [],
                 },
@@ -261,8 +239,8 @@ class TestFundingArbService:
             [
                 {
                     "snapshots": [
-                        _snapshot("binance", "BTC/USDT", "0.001"),
-                        _snapshot("binance", "ETH/USDT", "0.0008"),
+                        build_market_snapshot("binance", "BTC/USDT", rate="0.001"),
+                        build_market_snapshot("binance", "ETH/USDT", rate="0.0008"),
                     ],
                     "opportunities": [
                         _opportunity("binance", "BTC/USDT", "0.001"),
@@ -272,8 +250,8 @@ class TestFundingArbService:
                 },
                 {
                     "snapshots": [
-                        _snapshot("binance", "BTC/USDT", "0.001"),
-                        _snapshot("binance", "ETH/USDT", "0.0008"),
+                        build_market_snapshot("binance", "BTC/USDT", rate="0.001"),
+                        build_market_snapshot("binance", "ETH/USDT", rate="0.0008"),
                     ],
                     "opportunities": [
                         _opportunity("binance", "BTC/USDT", "0.001"),
@@ -314,13 +292,15 @@ class TestFundingArbService:
         scanner = _SequenceScanner(
             [
                 {
-                    "snapshots": [{
-                        **_snapshot("binance", "BTC/USDT", "0.0005"),
-                        "view": {
-                            "spot_ticker": {"ask": "100"},
-                            "perp_ticker": {"bid": "100.1"},
-                        },
-                    }],
+                    "snapshots": [
+                        {
+                            **build_market_snapshot("binance", "BTC/USDT", rate="0.0005").to_dict(),
+                            "view": {
+                                "spot_ticker": {"ask": "100"},
+                                "perp_ticker": {"bid": "100.1"},
+                            },
+                        }
+                    ],
                     "opportunities": [],
                     "output": [],
                 }

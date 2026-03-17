@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
 
 from arb.exchange.binance import BinanceExchange
 from arb.models import MarketType
+from arb.net.schemas import HttpRequest, JsonValue
 
 
-async def fake_transport(request: dict[str, Any]) -> dict[str, Any]:
+async def fake_transport(request: HttpRequest) -> JsonValue:
     path = request["path"]
     params = request.get("params", {})
     symbol = params.get("symbol", "BTCUSDT")

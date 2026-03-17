@@ -10,7 +10,9 @@ import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from arb.market.schemas import MarketSnapshot
 from arb.models import MarketType
+from arb.models import FundingRate, Ticker
 from arb.runtime import LiveExchangeManager, OpportunityPipeline, RealtimeScanner, ScanTarget
 from arb.scanner.funding_scanner import FundingScanner
 
@@ -19,28 +21,28 @@ class _StaticRuntime:
     async def public_ping(self) -> bool:
         return True
 
-    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> dict[str, object]:
+    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> MarketSnapshot:
         ts = datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat()
-        return {
-            "ticker": {
-                "exchange": "binance",
-                "symbol": symbol,
-                "market_type": market_type.value,
-                "bid": "100.0",
-                "ask": "100.2",
-                "last": "100.1",
-                "ts": ts,
-            },
-            "funding": {
-                "exchange": "binance",
-                "symbol": symbol,
-                "rate": "0.0008",
-                "predicted_rate": "0.0008",
-                "next_funding_time": datetime(2026, 1, 1, 8, tzinfo=timezone.utc).isoformat(),
-                "ts": ts,
-            },
-            "liquidity_usd": "250000",
-        }
+        return MarketSnapshot(
+            ticker=Ticker(
+                exchange="binance",
+                symbol=symbol,
+                market_type=market_type,
+                bid=Decimal("100.0"),
+                ask=Decimal("100.2"),
+                last=Decimal("100.1"),
+                ts=ts,
+            ),
+            funding=FundingRate(
+                exchange="binance",
+                symbol=symbol,
+                rate=Decimal("0.0008"),
+                predicted_rate=Decimal("0.0008"),
+                next_funding_time=datetime(2026, 1, 1, 8, tzinfo=timezone.utc),
+                ts=ts,
+            ),
+            liquidity_usd=Decimal("250000"),
+        )
 
 
 async def main() -> None:

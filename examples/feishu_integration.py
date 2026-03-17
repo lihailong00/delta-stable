@@ -7,14 +7,15 @@ PYTHONPATH=src uv run python examples/feishu_integration.py
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from arb.integrations.feishu.cards import build_action_card, build_positions_card, build_strategies_card
 from arb.integrations.feishu.client import FeishuClient
 from arb.integrations.feishu.events import FeishuEventHandler, sign_callback
+from arb.integrations.feishu.schemas import FeishuTransportRequest
+from arb.schemas.base import SerializableValue
 
 
-def fake_transport(request: dict[str, Any]) -> dict[str, Any]:
+def fake_transport(request: FeishuTransportRequest) -> dict[str, SerializableValue]:
     if "tenant_access_token" in request["url"]:
         return {"tenant_access_token": "tenant-token", "expire": 7200}
     return {
@@ -38,9 +39,9 @@ def main() -> None:
     action_card = build_action_card("spot_perp:BTC/USDT", "close", confirm_text="确认平仓 BTC funding 仓位")
 
     print("positions card")
-    print(json.dumps(positions_card, indent=2, ensure_ascii=False))
+    print(json.dumps(positions_card.to_dict(), indent=2, ensure_ascii=False))
     print("strategies card")
-    print(json.dumps(strategies_card, indent=2, ensure_ascii=False))
+    print(json.dumps(strategies_card.to_dict(), indent=2, ensure_ascii=False))
     print("send response", client.send_card(receive_id="ou_xxx", card=action_card))
 
     raw_body = json.dumps({"action": {"value": {"action": "close", "target": "spot_perp:BTC/USDT"}}})
@@ -59,7 +60,7 @@ def main() -> None:
         },
         raw_body=raw_body,
     )
-    print("parsed callback", parsed)
+    print("parsed callback", parsed.to_dict())
 
 
 if __name__ == "__main__":
