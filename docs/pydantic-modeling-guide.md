@@ -47,3 +47,8 @@
 1. 先定义模型，再迁移调用点
 2. 兼容层只作为过渡，不长期保留
 3. 优先收紧主链，再处理边角模块
+
+## 配套检查
+
+- 建模规范看这里
+- 类型门禁和本地/CI 检查命令看 [type-checking-guide.md](/home/longcoding/dev/project/delta_stable/docs/type-checking-guide.md)

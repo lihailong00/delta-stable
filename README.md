@@ -6,6 +6,7 @@
 
 简单使用手册见 [simple-usage-manual.md](/home/longcoding/dev/project/delta_stable/docs/simple-usage-manual.md)。
 日常操作和熟练使用路径见 [operator-guide.md](/home/longcoding/dev/project/delta_stable/docs/operator-guide.md)。
+Pydantic 建模约束和类型门禁见 [pydantic-modeling-guide.md](/home/longcoding/dev/project/delta_stable/docs/pydantic-modeling-guide.md) 与 [type-checking-guide.md](/home/longcoding/dev/project/delta_stable/docs/type-checking-guide.md)。
 
 ## 阈值回测怎么用
 

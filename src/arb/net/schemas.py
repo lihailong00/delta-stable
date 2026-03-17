@@ -27,7 +27,7 @@ class HttpRequest(ArbFrozenModel):
     market_type: str | None = None
     signed: bool = False
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def body(self) -> JsonObject | JsonArray | None:
         return self.json_body

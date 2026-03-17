@@ -68,5 +68,5 @@ def to_serializable(value: object) -> SerializableValue:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return [to_serializable(item) for item in value]
     if isinstance(value, Enum):
-        return value.value
+        return cast(SerializableValue, value.value)
     return cast(SerializableValue, value)
