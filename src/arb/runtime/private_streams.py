@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from arb.execution.private_event_hub import PrivateEventHub
 from arb.net.ws import WebSocketSession
 from arb.ws.base import BaseWebSocketClient
 
@@ -29,18 +30,20 @@ class PrivateStreamService:
         *,
         symbol: str | None = None,
         max_messages: int = 1,
+        event_hub: PrivateEventHub | None = None,
     ) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
 
         async def on_message(message: Any) -> None:
             for event in self.ws_client.handle_message(message):
-                events.append(
-                    {
-                        "exchange": event.exchange,
-                        "channel": event.channel,
-                        "payload": dict(event.payload),
-                    }
-                )
+                normalized = {
+                    "exchange": event.exchange,
+                    "channel": event.channel,
+                    "payload": dict(event.payload),
+                }
+                events.append(normalized)
+                if event_hub is not None:
+                    event_hub.publish(normalized)
 
         session = WebSocketSession(
             self.ws_client.endpoint,

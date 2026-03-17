@@ -6,7 +6,9 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
+from arb.execution.private_event_hub import PrivateEventHub
 from arb.models import Fill, MarketType, Order, OrderStatus
+from arb.models import Side
 
 TERMINAL_STATUSES = {
     OrderStatus.FILLED,
@@ -39,10 +41,12 @@ class OrderTracker:
         max_polls: int = 5,
         poll_interval: float = 0.05,
         sleep: Any | None = None,
+        event_hub: PrivateEventHub | None = None,
     ) -> None:
         self.max_polls = max_polls
         self.poll_interval = poll_interval
         self.sleep = sleep or asyncio.sleep
+        self.event_hub = event_hub
 
     async def track_order(
         self,
@@ -59,7 +63,7 @@ class OrderTracker:
         current = order
         polls = 0
         while polls < self.max_polls:
-            current = self._merge_order(current, await client.fetch_order(str(order.order_id), symbol, market_type))
+            current = await self._next_order_state(client, current, symbol, market_type)
             polls += 1
             if self._is_terminal(current):
                 fills = await self._fetch_fills(client, current.order_id, symbol, market_type)
@@ -95,13 +99,98 @@ class OrderTracker:
         market_type: MarketType,
     ) -> list[Fill]:
         if order_id is None or not hasattr(client, "fetch_fills"):
-            return []
-        return list(await client.fetch_fills(str(order_id), symbol, market_type))
+            return self._event_fills(order_id, symbol, market_type)
+        fills = list(await client.fetch_fills(str(order_id), symbol, market_type))
+        event_fills = self._event_fills(order_id, symbol, market_type)
+        merged: dict[str, Fill] = {fill.fill_id: fill for fill in fills}
+        for fill in event_fills:
+            merged.setdefault(fill.fill_id, fill)
+        return list(merged.values())
 
     async def _sleep(self, delay: float) -> None:
         result = self.sleep(delay)
         if asyncio.iscoroutine(result):
             await result
+
+    async def _next_order_state(
+        self,
+        client: Any,
+        current: Order,
+        symbol: str,
+        market_type: MarketType,
+    ) -> Order:
+        if self.event_hub is not None and current.order_id is not None:
+            payload = self.event_hub.pop_order(str(current.order_id))
+            if payload is not None:
+                return self._merge_order(current, self._order_from_event(current, payload, market_type))
+        return self._merge_order(current, await client.fetch_order(str(current.order_id), symbol, market_type))
+
+    def _event_fills(
+        self,
+        order_id: str | None,
+        symbol: str,
+        market_type: MarketType,
+    ) -> list[Fill]:
+        if self.event_hub is None or order_id is None:
+            return []
+        events = self.event_hub.drain_fills(order_id)
+        fills: list[Fill] = []
+        for payload in events:
+            fills.append(
+                Fill(
+                    exchange=str(payload.get("exchange", "")) or str(payload.get("venue", "")) or "",
+                    symbol=str(payload.get("symbol", symbol)),
+                    market_type=market_type,
+                    order_id=str(payload.get("order_id", order_id)),
+                    fill_id=str(payload.get("fill_id", "")),
+                    side=Side(str(payload.get("side", "buy")).lower()),
+                    quantity=payload_decimal(payload.get("quantity", "0")),
+                    price=payload_decimal(payload.get("price", "0")),
+                    fee=payload_decimal(payload.get("fee", "0")),
+                    fee_asset=payload.get("fee_asset"),
+                )
+            )
+        return fills
+
+    def _order_from_event(
+        self,
+        current: Order,
+        payload: dict[str, Any],
+        market_type: MarketType,
+    ) -> Order:
+        return Order(
+            exchange=str(payload.get("exchange", current.exchange)) or current.exchange,
+            symbol=str(payload.get("symbol", current.symbol)) or current.symbol,
+            market_type=market_type,
+            side=Side(str(payload.get("side", current.side.value)).lower()),
+            quantity=payload_decimal(payload.get("quantity", current.quantity)),
+            price=(
+                payload_decimal(payload["price"])
+                if payload.get("price") not in (None, "")
+                else current.price
+            ),
+            status=self._normalize_status(str(payload.get("status", current.status.value))),
+            order_id=str(payload.get("order_id", current.order_id)),
+            filled_quantity=payload_decimal(payload.get("filled_quantity", current.filled_quantity)),
+            average_price=(
+                payload_decimal(payload["average_price"])
+                if payload.get("average_price") not in (None, "")
+                else current.average_price
+            ),
+            reduce_only=bool(payload.get("reduce_only", current.reduce_only)),
+            raw_status=str(payload.get("status", current.raw_status or current.status.value)),
+            client_order_id=str(payload["client_order_id"]) if payload.get("client_order_id") else current.client_order_id,
+        )
+
+    def _normalize_status(self, value: str) -> OrderStatus:
+        normalized = value.strip().lower().replace(" ", "_")
+        aliases = {
+            "partiallyfilled": "partially_filled",
+            "partially-filled": "partially_filled",
+            "cancelled": "canceled",
+        }
+        normalized = aliases.get(normalized, normalized)
+        return OrderStatus(normalized)
 
     def _merge_order(self, previous: Order, latest: Order) -> Order:
         return Order(
@@ -139,3 +228,11 @@ class OrderTracker:
             raw_status=merged.raw_status or "CANCELED",
             ts=merged.ts,
         )
+
+
+def payload_decimal(value: Any) -> Any:
+    from decimal import Decimal
+
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))

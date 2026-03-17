@@ -3,6 +3,7 @@
 from .executor import ExecutionLeg, ExecutionResult, PairExecutor
 from .guards import GuardViolation, PreTradeGuards
 from .order_tracker import OrderTrackResult, OrderTracker
+from .private_event_hub import PrivateEventHub
 from .router import ExecutionRouter
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "OrderTrackResult",
     "OrderTracker",
     "PairExecutor",
+    "PrivateEventHub",
     "PreTradeGuards",
 ]

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
+from arb.execution.private_event_hub import PrivateEventHub
 from arb.execution.order_tracker import OrderTracker
 from arb.models import Fill, MarketType, Order, OrderStatus, Side
 
@@ -92,3 +93,49 @@ class TestOrderTracker:
         assert result.canceled
         assert result.final_order.status is OrderStatus.CANCELED
         assert client.canceled == ['o2']
+
+    async def test_tracker_uses_private_event_hub_before_polling(self) -> None:
+        hub = PrivateEventHub()
+        hub.publish(
+            {
+                "channel": "order.update",
+                "payload": {
+                    "symbol": "BTC/USDT",
+                    "order_id": "o3",
+                    "side": "buy",
+                    "status": "filled",
+                    "quantity": "1",
+                    "filled_quantity": "1",
+                    "price": "100",
+                },
+            }
+        )
+        hub.publish(
+            {
+                "channel": "fill.update",
+                "payload": {
+                    "symbol": "BTC/USDT",
+                    "order_id": "o3",
+                    "fill_id": "f3",
+                    "side": "buy",
+                    "quantity": "1",
+                    "price": "100",
+                },
+            }
+        )
+        tracker = OrderTracker(max_polls=1, poll_interval=0, sleep=lambda _: None, event_hub=hub)
+        initial = Order(
+            exchange='binance',
+            symbol='BTC/USDT',
+            market_type=MarketType.SPOT,
+            side=Side.BUY,
+            quantity=Decimal('1'),
+            price=Decimal('100'),
+            status=OrderStatus.NEW,
+            order_id='o3',
+        )
+        client = _TrackingClient(states=[])
+        result = await tracker.track_order(client, initial, symbol='BTC/USDT', market_type=MarketType.SPOT)
+        assert result.final_order.status is OrderStatus.FILLED
+        assert result.polls == 1
+        assert result.fills[0].fill_id == 'f3'
