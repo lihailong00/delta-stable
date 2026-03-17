@@ -53,3 +53,12 @@ class TestCommandDispatcher:
         self.dispatcher.dispatch_next()
         outcomes = [record.outcome for record in self.audit.records()]
         assert outcomes == ['queued', 'done']
+
+    def test_dispatch_all_flushes_queue(self) -> None:
+        self.dispatcher.submit(ControlCommand('cmd-6', 'pause', 'spot_perp:BTC/USDT', 'alice'))
+        self.dispatcher.submit(ControlCommand('cmd-7', 'pause', 'spot_perp:ETH/USDT', 'alice'))
+
+        results = self.dispatcher.dispatch_all()
+
+        assert [item['command_id'] for item in results] == ['cmd-6', 'cmd-7']
+        assert self.dispatcher.queue_snapshot()['queued'] == []

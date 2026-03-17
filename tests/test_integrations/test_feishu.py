@@ -61,6 +61,32 @@ class TestFeishuEvents:
         assert command['requested_by'] == 'ou_xxx'
         assert command['target'] == 'spot_perp:BTC/USDT'
 
+    def test_dispatch_callback_routes_submit_and_confirm(self) -> None:
+        handler = FeishuEventHandler(verification_token='verify')
+        calls: list[tuple[str, object]] = []
+
+        class _Api:
+            def submit_command(self, token, request):
+                calls.append(('submit', (token, request.action, request.target)))
+                return {'accepted': True, 'command_id': 'cmd-1', 'status': 'queued'}
+
+            def confirm_command(self, token, command_id, actor):
+                calls.append(('confirm', (token, command_id, actor)))
+                return {'accepted': True, 'command_id': command_id, 'status': 'queued'}
+
+            def cancel_command(self, token, command_id, actor):
+                calls.append(('cancel', (token, command_id, actor)))
+                return {'accepted': True, 'command_id': command_id, 'status': 'canceled'}
+
+        submit_callback = {'action': {'action': 'manual_close', 'target': 'funding_spot_perp:binance:BTC/USDT'}, 'operator_id': 'ou_xxx'}
+        confirm_callback = {'action': {'action': 'confirm', 'command_id': 'cmd-1'}, 'operator_id': 'ou_xxx'}
+
+        handler.dispatch_callback(submit_callback, control_api=_Api(), token='abc')
+        handler.dispatch_callback(confirm_callback, control_api=_Api(), token='abc')
+
+        assert calls[0] == ('submit', ('abc', 'manual_close', 'funding_spot_perp:binance:BTC/USDT'))
+        assert calls[1] == ('confirm', ('abc', 'cmd-1', 'ou_xxx'))
+
 class TestFeishuCards:
 
     def test_cards_render_positions_and_actions(self) -> None:

@@ -99,6 +99,9 @@ class CommandDispatcher:
         if not self._queue:
             return None
         command = self._queue.pop(0)
+        return self.dispatch(command)
+
+    def dispatch(self, command: ControlCommand) -> dict[str, Any]:
         result = self.handler(command)
         self.audit.record(
             actor=command.requested_by,
@@ -108,6 +111,14 @@ class CommandDispatcher:
             outcome=str(result.get("status", "dispatched")),
         )
         return result
+
+    def dispatch_all(self) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        while self._queue:
+            dispatched = self.dispatch_next()
+            if dispatched is not None:
+                results.append(dispatched)
+        return results
 
     def queue_snapshot(self) -> dict[str, list[str]]:
         return {

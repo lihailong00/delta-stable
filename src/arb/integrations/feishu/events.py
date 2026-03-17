@@ -7,6 +7,8 @@ import hmac
 from collections.abc import Mapping
 from typing import Any
 
+from arb.control.schemas import CommandRequest
+
 
 def sign_callback(secret: str, timestamp: str, nonce: str, body: str) -> str:
     payload = f"{timestamp}:{nonce}:{body}"
@@ -73,3 +75,35 @@ class FeishuEventHandler:
         if "require_confirmation" in action:
             command["require_confirmation"] = bool(action["require_confirmation"])
         return command
+
+    def dispatch_callback(
+        self,
+        callback: Mapping[str, Any],
+        *,
+        control_api: Any,
+        token: str,
+    ) -> dict[str, Any]:
+        payload = self.to_command_payload(callback)
+        action = str(payload.get("action", ""))
+        if action == "confirm":
+            return control_api.confirm_command(
+                token,
+                str(payload["command_id"]),
+                str(payload["requested_by"]),
+            )
+        if action == "cancel":
+            return control_api.cancel_command(
+                token,
+                str(payload["command_id"]),
+                str(payload["requested_by"]),
+            )
+        return control_api.submit_command(
+            token,
+            CommandRequest(
+                action=action,
+                target=str(payload["target"]),
+                requested_by=str(payload["requested_by"]),
+                require_confirmation=bool(payload.get("require_confirmation", False)),
+                payload=dict(payload.get("payload", {})),
+            ),
+        )

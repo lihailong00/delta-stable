@@ -57,6 +57,16 @@ class ControlAPI:
     def __init__(self, context: ApiContext) -> None:
         self.context = context
 
+    @classmethod
+    def from_service_bridge(
+        cls,
+        bridge: Any,
+        dispatcher: Any,
+        *,
+        auth_token: str = "secret-token",
+    ) -> "ControlAPI":
+        return cls(bridge.build_api_context(dispatcher, auth_token=auth_token))
+
     def health(self) -> dict[str, Any]:
         return HealthResponse(status="ok").to_dict()
 
