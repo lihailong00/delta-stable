@@ -5,10 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from decimal import Decimal
 
+from arb.funding import DEFAULT_FUNDING_INTERVAL_HOURS
 from arb.market.schemas import MarketSnapshot, coerce_market_snapshot
 from arb.schemas.base import ArbFrozenModel, SerializableValue
 
-from arb.scanner.cost_model import annualize_rate, estimate_net_rate
+from arb.scanner.cost_model import annualize_rate, daily_rate, estimate_net_rate, hourly_rate
 from arb.scanner.filters import filter_opportunities
 
 
@@ -17,6 +18,9 @@ class FundingOpportunity(ArbFrozenModel):
     symbol: str
     gross_rate: Decimal
     net_rate: Decimal
+    funding_interval_hours: int = DEFAULT_FUNDING_INTERVAL_HOURS
+    hourly_net_rate: Decimal = Decimal("0")
+    daily_net_rate: Decimal = Decimal("0")
     annualized_net_rate: Decimal
     spread_bps: Decimal
     liquidity_usd: Decimal
@@ -58,6 +62,7 @@ class FundingScanner:
             if not funding or not ticker:
                 continue
             gross_rate = funding.rate
+            interval_hours = funding.funding_interval_hours
             net_rate = estimate_net_rate(
                 gross_rate,
                 trading_fee_rate=self.trading_fee_rate,
@@ -77,7 +82,10 @@ class FundingScanner:
                 symbol=funding.symbol,
                 gross_rate=gross_rate,
                 net_rate=net_rate,
-                annualized_net_rate=annualize_rate(net_rate),
+                funding_interval_hours=interval_hours,
+                hourly_net_rate=hourly_rate(net_rate, interval_hours=interval_hours),
+                daily_net_rate=daily_rate(net_rate, interval_hours=interval_hours),
+                annualized_net_rate=annualize_rate(net_rate, interval_hours=interval_hours),
                 spread_bps=spread_bps,
                 liquidity_usd=liquidity_usd,
             )
