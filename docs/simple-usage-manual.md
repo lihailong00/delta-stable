@@ -1,5 +1,7 @@
 # Simple Usage Manual
 
+如果你想看的不是“最小怎么跑”，而是“怎么逐步把系统用熟”，请直接看 [operator-guide.md](/home/longcoding/dev/project/delta_stable/docs/operator-guide.md)。
+
 ## 1. 先理解当前项目是什么
 
 这个仓库现在更像一套“可组装的资金费率套利组件”，不是已经完全组装好的实盘服务。
@@ -204,3 +206,29 @@ PYTHONPATH=src uv run python scripts/run_funding_arb_dry_run.py \
 - 还没做 smoke 和 dry-run 就上飞书手动平仓
 
 先把“连通、扫描、日志、告警”跑稳，再往执行走。
+
+## 8. 回测阈值策略怎么跑
+
+如果你只是想先验证“什么时候该开仓、什么时候该平仓”，先跑离线回测示例：
+
+```bash
+PYTHONPATH=src uv run python examples/backtest_report.py
+PYTHONPATH=src uv run python examples/backtest_threshold_strategy.py
+```
+
+你主要看这些参数：
+
+- `open_threshold`：只有 funding 高于这个值才开仓。它不应该只是大于 `0`，而应该大于你的手续费、借币和执行风险预算。
+- `close_threshold`：持仓后 funding 掉到这个值以下就平仓。通常它会低于 `open_threshold`，避免来回抖动。
+- `hysteresis`：如果你只给 `open_threshold`，那 `close_threshold = open_threshold - hysteresis`。
+- `open_fee_rate / close_fee_rate`：只在开和平时各扣一次，不会每个 funding 周期都扣。
+- `rebalance_fee_rate / rebalance_threshold_bps`：只有价格偏离 enough 触发再平衡时才额外扣费。
+- `borrow_rate`：持仓期间每个 funding 周期都会累计。
+
+最小思路是：
+
+- 先用较高的 `open_threshold`，只让最明显的机会进场
+- 再把 `close_threshold` 设得更低一点，避免频繁开平仓
+- 最后再逐步引入 `rebalance_fee_rate` 和 `borrow_rate`
+
+如果你看到 `trade_count` 很高、`average_trade_return` 很低，通常说明阈值太激进，或者费用设得太乐观。

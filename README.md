@@ -5,6 +5,25 @@
 这套代码的定位不是“已经能直接实盘跑的完整服务”，而是“实盘系统的可测试核心部件”。现在每个模块都能单独测试、单独替换，后续你可以按自己的部署方式把它们串成一个长期运行的进程或多个服务。
 
 简单使用手册见 [simple-usage-manual.md](/home/longcoding/dev/project/delta_stable/docs/simple-usage-manual.md)。
+日常操作和熟练使用路径见 [operator-guide.md](/home/longcoding/dev/project/delta_stable/docs/operator-guide.md)。
+
+## 阈值回测怎么用
+
+资金费率回测现在支持“`funding >= open_threshold` 才开仓，`funding < close_threshold` 就平仓”的状态机，不再默认整段历史一直持仓。
+
+- `open_threshold`：只有 funding 厚到足以覆盖手续费、借币和执行风险时才进场
+- `close_threshold`：持仓后 funding 变弱到这个阈值以下就退出
+- `hysteresis`：如果你不显式给 `close_threshold`，就用 `open_threshold - hysteresis`，避免阈值附近频繁开平
+- `open_fee_rate / close_fee_rate`：只在开仓和平仓时扣一次
+- `rebalance_fee_rate / rebalance_threshold_bps`：只有价格偏离到需要再平衡时才扣
+- `borrow_rate`：持仓期间每个 funding 周期都计入
+
+可以直接跑两个离线例子：
+
+```bash
+PYTHONPATH=src uv run python examples/backtest_report.py
+PYTHONPATH=src uv run python examples/backtest_threshold_strategy.py
+```
 
 ## 当前包含什么
 
