@@ -9,6 +9,7 @@ from typing import Any
 
 from arb.execution.router import RouteDecision
 from arb.models import MarketType, Position, PositionDirection
+from arb.risk.position_monitor import PositionMonitor
 from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
 from arb.runtime.pipeline import OpportunityPipeline
 from arb.runtime.realtime_scanner import RealtimeScanner
@@ -29,7 +30,10 @@ class ActiveFundingArb:
     exchange: str
     symbol: str
     quantity: Decimal
+    spot_quantity: Decimal
+    perp_quantity: Decimal
     opened_at: datetime
+    liquidation_price: Decimal | None = None
     route: RouteDecision | None = None
     state: StrategyState = field(default_factory=StrategyState)
 
@@ -47,6 +51,7 @@ class FundingArbService:
         manager: LiveExchangeManager,
         pipeline: OpportunityPipeline,
         strategy: SpotPerpStrategy | None = None,
+        position_monitor: PositionMonitor | None = None,
         position_quantity: Decimal = Decimal("1"),
         strategy_name: str = "funding_spot_perp",
     ) -> None:
@@ -57,6 +62,7 @@ class FundingArbService:
         self.manager = manager
         self.pipeline = pipeline
         self.strategy = strategy or SpotPerpStrategy()
+        self.position_monitor = position_monitor or PositionMonitor()
         self.position_quantity = position_quantity
         self.strategy_name = strategy_name
         self.active_positions: dict[str, ActiveFundingArb] = {}
@@ -79,14 +85,32 @@ class FundingArbService:
             snapshot = snapshot_index.get((position.exchange, position.symbol))
             if snapshot is None:
                 continue
+            monitor_decision = self.position_monitor.evaluate(
+                symbol=position.symbol,
+                snapshot=snapshot,
+                spot_quantity=position.spot_quantity,
+                perp_quantity=position.perp_quantity,
+                opened_at=position.opened_at,
+                max_holding_period=self.strategy.max_holding_period,
+                min_expected_rate=self.strategy.close_funding_rate,
+                liquidation_price=position.liquidation_price,
+                now=current_time,
+            )
+            if monitor_decision.should_close:
+                result = await self._close_position(position, snapshot, reason=monitor_decision.close_reason or "risk_close")
+                closed.append(result)
+                if result.status in {"closed", "reduced"}:
+                    del self.active_positions[key]
+                    self.manager.release_slot(key)
+                continue
             decision = self.strategy.evaluate(
                 SpotPerpInputs(
                     symbol=position.symbol,
                     funding_rate=Decimal(str(snapshot["funding"]["rate"])),
-                    spot_price=Decimal(str(snapshot["ticker"]["ask"])),
-                    perp_price=Decimal(str(snapshot["ticker"]["bid"])),
-                    spot_quantity=position.quantity,
-                    perp_quantity=position.quantity,
+                    spot_price=Decimal(str(snapshot.get("view", {}).get("spot_ticker", snapshot["ticker"]).get("ask"))),
+                    perp_price=Decimal(str(snapshot.get("view", {}).get("perp_ticker", snapshot["ticker"]).get("bid"))),
+                    spot_quantity=position.spot_quantity,
+                    perp_quantity=position.perp_quantity,
                 ),
                 state=position.state,
                 now=current_time,
@@ -117,11 +141,18 @@ class FundingArbService:
             result = await self._open_position(opportunity, snapshot, current_time)
             opened.append(result)
             if result.status == "opened":
+                spot_quantity = self.position_quantity
+                perp_quantity = self.position_quantity
+                if result.execution is not None and len(result.execution.orders) == 2:
+                    spot_quantity = Decimal(str(result.execution.orders[0].filled_quantity or self.position_quantity))
+                    perp_quantity = Decimal(str(result.execution.orders[1].filled_quantity or self.position_quantity))
                 self.active_positions[key] = ActiveFundingArb(
                     workflow_id=key,
                     exchange=opportunity.exchange,
                     symbol=opportunity.symbol,
                     quantity=self.position_quantity,
+                    spot_quantity=spot_quantity,
+                    perp_quantity=perp_quantity,
                     opened_at=current_time,
                     route=result.route,
                     state=StrategyState(is_open=True, opened_at=current_time, hedge_ratio=Decimal("1")),
@@ -204,8 +235,8 @@ class FundingArbService:
         result = await self.close_workflow.execute(
             ClosePositionRequest(
                 symbol=position.symbol,
-                spot_quantity=position.quantity,
-                perp_quantity=position.quantity,
+                spot_quantity=position.spot_quantity,
+                perp_quantity=position.perp_quantity,
                 spot_price=Decimal(str(snapshot["ticker"]["bid"])),
                 perp_price=Decimal(str(snapshot["ticker"]["ask"])),
                 venue_clients={position.exchange: self.venues[position.exchange]},
@@ -234,7 +265,7 @@ class FundingArbService:
             self._persist_position_pair(
                 exchange=position.exchange,
                 symbol=position.symbol,
-                quantity=position.quantity,
+                quantity=max(position.spot_quantity, position.perp_quantity),
                 spot_entry=Decimal(str(snapshot["ticker"]["bid"])),
                 perp_entry=Decimal(str(snapshot["ticker"]["ask"])),
                 closed=True,

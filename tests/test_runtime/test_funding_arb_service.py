@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from arb.execution.executor import PairExecutor
 from arb.execution.order_tracker import OrderTracker
 from arb.models import MarketType, Order, OrderStatus, Side
+from arb.runtime.funding_arb_service import ActiveFundingArb
 from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
 from arb.runtime.funding_arb_service import FundingArbService
 from arb.runtime.pipeline import OpportunityPipeline
@@ -300,3 +301,51 @@ class TestFundingArbService:
         assert len(second["opened"]) == 1
         assert second["opened"][0].status == "opened"
         assert {position.symbol for position in second["active"]} == {"BTC/USDT", "ETH/USDT"}
+
+    async def test_service_closes_position_when_monitor_detects_naked_leg(self) -> None:
+        spot_client = _Client(
+            orders=[_order(exchange="binance", symbol="BTC/USDT", market_type=MarketType.SPOT, side=Side.SELL, order_id="spot-close", status=OrderStatus.FILLED)],
+            fetched_orders=[_order(exchange="binance", symbol="BTC/USDT", market_type=MarketType.SPOT, side=Side.SELL, order_id="spot-close", status=OrderStatus.FILLED)],
+        )
+        perp_client = _Client(
+            orders=[_order(exchange="binance", symbol="BTC/USDT", market_type=MarketType.PERPETUAL, side=Side.BUY, order_id="perp-close", status=OrderStatus.FILLED, reduce_only=True)],
+            fetched_orders=[_order(exchange="binance", symbol="BTC/USDT", market_type=MarketType.PERPETUAL, side=Side.BUY, order_id="perp-close", status=OrderStatus.FILLED, reduce_only=True)],
+        )
+        scanner = _SequenceScanner(
+            [
+                {
+                    "snapshots": [{
+                        **_snapshot("binance", "BTC/USDT", "0.0005"),
+                        "view": {
+                            "spot_ticker": {"ask": "100"},
+                            "perp_ticker": {"bid": "100.1"},
+                        },
+                    }],
+                    "opportunities": [],
+                    "output": [],
+                }
+            ]
+        )
+        repository = _MemoryRepository()
+        service = FundingArbService(
+            scanner=scanner,
+            open_workflow=OpenPositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
+            close_workflow=ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
+            venues={"binance": VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
+            manager=LiveExchangeManager({}),
+            pipeline=OpportunityPipeline(repository=repository),
+        )
+        service.active_positions["funding_spot_perp:binance:BTC/USDT"] = ActiveFundingArb(
+            workflow_id="funding_spot_perp:binance:BTC/USDT",
+            exchange="binance",
+            symbol="BTC/USDT",
+            quantity=Decimal("1"),
+            spot_quantity=Decimal("1"),
+            perp_quantity=Decimal("0.8"),
+            opened_at=datetime.now(tz=timezone.utc),
+        )
+
+        result = await service.run_once([ScanTarget("binance", "BTC/USDT", MarketType.PERPETUAL)])
+
+        assert len(result["closed"]) == 1
+        assert result["closed"][0].reason == "naked_leg"
