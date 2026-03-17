@@ -33,6 +33,7 @@ class BybitWebSocketClient(BaseWebSocketClient):
         self.market_type = market_type
         self.api_key = api_key
         self.api_secret = api_secret
+        self.private = private
 
     def build_subscribe_message(
         self,
@@ -41,6 +42,8 @@ class BybitWebSocketClient(BaseWebSocketClient):
         symbol: str | None = None,
         market: str | None = None,
     ) -> Mapping[str, Any]:
+        if self.private and channel in {"order", "execution", "position"}:
+            return {"op": "subscribe", "args": [channel]}
         if symbol is None:
             raise ValueError("symbol is required for Bybit subscriptions")
         topic_symbol = exchange_symbol(symbol, delimiter="")
@@ -72,6 +75,12 @@ class BybitWebSocketClient(BaseWebSocketClient):
         topic = message.get("topic")
         if not topic or message.get("success") is True:
             return []
+        if topic == "order":
+            return self._parse_private_orders(message)
+        if topic == "execution":
+            return self._parse_private_fills(message)
+        if topic == "position":
+            return self._parse_private_positions(message)
         if topic.startswith("orderbook."):
             return [self._parse_orderbook(message)]
         if topic.startswith("tickers."):
@@ -109,3 +118,66 @@ class BybitWebSocketClient(BaseWebSocketClient):
                 ),
             },
         )
+
+    def _parse_private_orders(self, message: Mapping[str, Any]) -> list[WsEvent]:
+        events: list[WsEvent] = []
+        for item in message.get("data", []):
+            events.append(
+                WsEvent(
+                    exchange=self.exchange,
+                    channel="order.update",
+                    payload={
+                        "symbol": normalize_symbol(str(item["symbol"])),
+                        "order_id": str(item["orderId"]),
+                        "side": str(item.get("side", "Buy")).lower(),
+                        "status": str(item.get("orderStatus", "New")).lower(),
+                        "quantity": Decimal(str(item.get("qty", "0"))),
+                        "filled_quantity": Decimal(str(item.get("cumExecQty", "0"))),
+                        "price": Decimal(str(item["price"])) if item.get("price") not in (None, "", "0") else None,
+                    },
+                )
+            )
+        return events
+
+    def _parse_private_fills(self, message: Mapping[str, Any]) -> list[WsEvent]:
+        events: list[WsEvent] = []
+        for item in message.get("data", []):
+            events.append(
+                WsEvent(
+                    exchange=self.exchange,
+                    channel="fill.update",
+                    payload={
+                        "symbol": normalize_symbol(str(item["symbol"])),
+                        "order_id": str(item["orderId"]),
+                        "fill_id": str(item.get("execId", "")),
+                        "side": str(item.get("side", "Buy")).lower(),
+                        "quantity": Decimal(str(item.get("execQty", "0"))),
+                        "price": Decimal(str(item.get("execPrice", "0"))),
+                        "fee": Decimal(str(item.get("execFee", "0"))),
+                        "fee_asset": item.get("feeCurrency"),
+                    },
+                )
+            )
+        return events
+
+    def _parse_private_positions(self, message: Mapping[str, Any]) -> list[WsEvent]:
+        events: list[WsEvent] = []
+        for item in message.get("data", []):
+            quantity = Decimal(str(item.get("size", "0")))
+            if quantity == 0:
+                continue
+            events.append(
+                WsEvent(
+                    exchange=self.exchange,
+                    channel="position.update",
+                    payload={
+                        "symbol": normalize_symbol(str(item["symbol"])),
+                        "direction": str(item.get("side", "Buy")).lower(),
+                        "quantity": quantity,
+                        "entry_price": Decimal(str(item.get("avgPrice", "0"))),
+                        "mark_price": Decimal(str(item.get("markPrice", "0"))),
+                        "unrealized_pnl": Decimal(str(item.get("unrealisedPnl", item.get("unrealizedPnl", "0")))),
+                    },
+                )
+            )
+        return events

@@ -35,3 +35,48 @@ class TestOkxWebSocket:
         assert ticker_events[0].payload['last'] == Decimal('100.5')
         assert funding_events[0].channel == 'funding.update'
         assert funding_events[0].payload['funding_rate'] == Decimal('0.0001')
+
+    def test_builds_private_subscribe_message(self) -> None:
+        client = OkxWebSocketClient(MarketType.PERPETUAL, private=True)
+        payload = client.build_subscribe_message('orders', symbol='BTC/USDT')
+        assert payload['args'][0]['channel'] == 'orders'
+        assert payload['args'][0]['instId'] == 'BTC-USDT-SWAP'
+
+    def test_parses_private_orders(self) -> None:
+        client = OkxWebSocketClient(MarketType.PERPETUAL, private=True)
+        events = client.parse_message({
+            'arg': {'channel': 'orders', 'instId': 'BTC-USDT-SWAP'},
+            'data': [{
+                'instId': 'BTC-USDT-SWAP',
+                'ordId': '1',
+                'side': 'sell',
+                'state': 'filled',
+                'sz': '2',
+                'accFillSz': '2',
+                'px': '100',
+                'fillSz': '1',
+                'fillPx': '99.9',
+                'tradeId': 'trade-1',
+                'fee': '0.01',
+                'feeCcy': 'USDT',
+            }],
+        })
+        assert [event.channel for event in events] == ['order.update', 'fill.update']
+        assert events[0].payload['status'] == 'filled'
+
+    def test_parses_private_positions(self) -> None:
+        client = OkxWebSocketClient(MarketType.PERPETUAL, private=True)
+        events = client.parse_message({
+            'arg': {'channel': 'positions', 'instId': 'BTC-USDT-SWAP'},
+            'data': [{
+                'instId': 'BTC-USDT-SWAP',
+                'pos': '-3',
+                'posSide': 'short',
+                'avgPx': '100',
+                'markPx': '99.8',
+                'upl': '0.5',
+            }],
+        })
+        assert len(events) == 1
+        assert events[0].channel == 'position.update'
+        assert events[0].payload['direction'] == 'short'

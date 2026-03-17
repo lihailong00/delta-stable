@@ -33,3 +33,62 @@ class TestBybitWebSocket:
         assert events[0].channel == 'ticker.update'
         assert events[0].payload['last'] == Decimal('100.5')
         assert events[0].payload['funding_rate'] == Decimal('0.0001')
+
+    def test_builds_private_subscribe_message(self) -> None:
+        client = BybitWebSocketClient(MarketType.PERPETUAL, private=True)
+        payload = client.build_subscribe_message('order')
+        assert payload['args'] == ['order']
+
+    def test_parses_private_order_messages(self) -> None:
+        client = BybitWebSocketClient(MarketType.PERPETUAL, private=True)
+        events = client.parse_message({
+            'topic': 'order',
+            'data': [{
+                'symbol': 'BTCUSDT',
+                'orderId': '1',
+                'side': 'Sell',
+                'orderStatus': 'Filled',
+                'qty': '2',
+                'cumExecQty': '1',
+                'price': '100',
+            }],
+        })
+        assert len(events) == 1
+        assert events[0].channel == 'order.update'
+        assert events[0].payload['symbol'] == 'BTC/USDT'
+
+    def test_parses_private_execution_messages(self) -> None:
+        client = BybitWebSocketClient(MarketType.PERPETUAL, private=True)
+        events = client.parse_message({
+            'topic': 'execution',
+            'data': [{
+                'symbol': 'BTCUSDT',
+                'orderId': '1',
+                'execId': 'fill-1',
+                'side': 'Sell',
+                'execQty': '0.5',
+                'execPrice': '99.8',
+                'execFee': '0.01',
+                'feeCurrency': 'USDT',
+            }],
+        })
+        assert len(events) == 1
+        assert events[0].channel == 'fill.update'
+        assert events[0].payload['quantity'] == Decimal('0.5')
+
+    def test_parses_private_position_messages(self) -> None:
+        client = BybitWebSocketClient(MarketType.PERPETUAL, private=True)
+        events = client.parse_message({
+            'topic': 'position',
+            'data': [{
+                'symbol': 'BTCUSDT',
+                'side': 'Buy',
+                'size': '3',
+                'avgPrice': '100',
+                'markPrice': '101',
+                'unrealisedPnl': '3.2',
+            }],
+        })
+        assert len(events) == 1
+        assert events[0].channel == 'position.update'
+        assert events[0].payload['quantity'] == Decimal('3')

@@ -31,6 +31,7 @@ class HtxWebSocketClient(BaseWebSocketClient):
         self.market_type = market_type
         self.api_key = api_key
         self.api_secret = api_secret
+        self.private = private
 
     def build_subscribe_message(
         self,
@@ -39,6 +40,11 @@ class HtxWebSocketClient(BaseWebSocketClient):
         symbol: str | None = None,
         market: str | None = None,
     ) -> Mapping[str, Any]:
+        if self.private and channel in {"orders", "positions"}:
+            if symbol is None:
+                return {"action": "sub", "ch": channel}
+            suffix = self.to_exchange_symbol(symbol)
+            return {"action": "sub", "ch": f"{channel}#{suffix}"}
         if symbol is None:
             raise ValueError("symbol is required for HTX subscriptions")
         if channel == "depth":
@@ -64,6 +70,10 @@ class HtxWebSocketClient(BaseWebSocketClient):
         if message.get("action") in {"req", "sub"} or message.get("status") == "ok":
             return []
         channel = str(message.get("ch", ""))
+        if channel.startswith("orders#"):
+            return self._parse_private_orders(message)
+        if channel.startswith("positions"):
+            return self._parse_private_positions(message)
         if channel.endswith(".depth.step0"):
             return [self._parse_depth(message)]
         if channel.endswith(".detail.merged"):
@@ -107,3 +117,49 @@ class HtxWebSocketClient(BaseWebSocketClient):
                 "last": Decimal(str(tick.get("close", bid))),
             },
         )
+
+    def _parse_private_orders(self, message: Mapping[str, Any]) -> list[WsEvent]:
+        data = message.get("data", {})
+        items = data if isinstance(data, list) else [data]
+        events: list[WsEvent] = []
+        for item in items:
+            events.append(
+                WsEvent(
+                    exchange=self.exchange,
+                    channel="order.update",
+                    payload={
+                        "symbol": normalize_symbol(str(item.get("symbol", item.get("contract_code", "")))),
+                        "order_id": str(item.get("order_id", item.get("orderId", ""))),
+                        "side": str(item.get("order_side", item.get("direction", "buy"))).lower(),
+                        "status": str(item.get("order_status", item.get("status", "submitted"))).lower(),
+                        "quantity": Decimal(str(item.get("order_size", item.get("volume", "0")))),
+                        "filled_quantity": Decimal(str(item.get("trade_volume", item.get("filled_amount", "0")))),
+                        "price": Decimal(str(item["price"])) if item.get("price") not in (None, "", "0") else None,
+                    },
+                )
+            )
+        return events
+
+    def _parse_private_positions(self, message: Mapping[str, Any]) -> list[WsEvent]:
+        data = message.get("data", {})
+        items = data if isinstance(data, list) else [data]
+        events: list[WsEvent] = []
+        for item in items:
+            quantity = Decimal(str(item.get("volume", item.get("position", "0"))))
+            if quantity == 0:
+                continue
+            events.append(
+                WsEvent(
+                    exchange=self.exchange,
+                    channel="position.update",
+                    payload={
+                        "symbol": normalize_symbol(str(item.get("contract_code", item.get("symbol", "")))),
+                        "direction": str(item.get("direction", "buy")).lower(),
+                        "quantity": abs(quantity),
+                        "entry_price": Decimal(str(item.get("cost_open", item.get("open_price_avg", "0")))),
+                        "mark_price": Decimal(str(item.get("last_price", item.get("mark_price", "0")))),
+                        "unrealized_pnl": Decimal(str(item.get("profit_unreal", "0"))),
+                    },
+                )
+            )
+        return events

@@ -17,10 +17,18 @@ class BinanceWebSocketClient(BaseWebSocketClient):
     spot_endpoint = "wss://stream.binance.com:9443/ws"
     futures_endpoint = "wss://fstream.binance.com/ws"
 
-    def __init__(self, market_type: MarketType = MarketType.SPOT) -> None:
+    def __init__(
+        self,
+        market_type: MarketType = MarketType.SPOT,
+        *,
+        private: bool = False,
+        listen_key: str | None = None,
+    ) -> None:
         endpoint = self.spot_endpoint if market_type is MarketType.SPOT else self.futures_endpoint
         super().__init__("binance", endpoint, heartbeat_interval=20)
         self.market_type = market_type
+        self.private = private
+        self.listen_key = listen_key
         self._request_id = 0
 
     def build_subscribe_message(
@@ -30,6 +38,15 @@ class BinanceWebSocketClient(BaseWebSocketClient):
         symbol: str | None = None,
         market: str | None = None,
     ) -> Mapping[str, Any]:
+        if self.private:
+            if channel not in {"orders", "positions", "fills", "userData"}:
+                raise ValueError(f"unsupported Binance private channel: {channel}")
+            self._request_id += 1
+            return {
+                "method": "SUBSCRIBE",
+                "params": [self.listen_key or channel],
+                "id": self._request_id,
+            }
         if symbol is None:
             raise ValueError("symbol is required for Binance subscriptions")
         self._request_id += 1
@@ -56,6 +73,12 @@ class BinanceWebSocketClient(BaseWebSocketClient):
         if "result" in payload:
             return []
         event_type = payload.get("e")
+        if event_type == "executionReport":
+            return self._parse_execution_report(payload)
+        if event_type == "ACCOUNT_UPDATE":
+            return self._parse_account_update(payload)
+        if event_type == "ORDER_TRADE_UPDATE":
+            return self._parse_futures_order_update(payload)
         if event_type == "depthUpdate":
             return [self._parse_depth_update(payload)]
         if event_type == "markPriceUpdate":
@@ -105,3 +128,101 @@ class BinanceWebSocketClient(BaseWebSocketClient):
                 "next_funding_time": int(payload["T"]),
             },
         )
+
+    def _parse_execution_report(self, payload: Mapping[str, Any]) -> list[WsEvent]:
+        symbol = normalize_symbol(str(payload["s"]))
+        events = [
+            WsEvent(
+                exchange=self.exchange,
+                channel="order.update",
+                payload={
+                    "symbol": symbol,
+                    "order_id": str(payload["i"]),
+                    "side": str(payload["S"]).lower(),
+                    "status": str(payload["X"]).lower(),
+                    "quantity": Decimal(str(payload["q"])),
+                    "filled_quantity": Decimal(str(payload.get("z", "0"))),
+                    "price": Decimal(str(payload["p"])) if payload.get("p") not in (None, "", "0") else None,
+                },
+            )
+        ]
+        last_fill = Decimal(str(payload.get("l", "0")))
+        if last_fill > 0:
+            events.append(
+                WsEvent(
+                    exchange=self.exchange,
+                    channel="fill.update",
+                    payload={
+                        "symbol": symbol,
+                        "order_id": str(payload["i"]),
+                        "fill_id": str(payload.get("t", "")),
+                        "side": str(payload["S"]).lower(),
+                        "quantity": last_fill,
+                        "price": Decimal(str(payload.get("L", payload.get("p", "0")))),
+                        "fee": Decimal(str(payload.get("n", "0"))),
+                        "fee_asset": payload.get("N"),
+                    },
+                )
+            )
+        return events
+
+    def _parse_account_update(self, payload: Mapping[str, Any]) -> list[WsEvent]:
+        account = payload.get("a", {})
+        positions = []
+        for item in account.get("P", []):
+            quantity = Decimal(str(item.get("pa", "0")))
+            if quantity == 0:
+                continue
+            positions.append(
+                WsEvent(
+                    exchange=self.exchange,
+                    channel="position.update",
+                    payload={
+                        "symbol": normalize_symbol(str(item["s"])),
+                        "direction": "long" if quantity > 0 else "short",
+                        "quantity": abs(quantity),
+                        "entry_price": Decimal(str(item.get("ep", "0"))),
+                        "mark_price": Decimal(str(item.get("mp", "0"))),
+                        "unrealized_pnl": Decimal(str(item.get("up", "0"))),
+                    },
+                )
+            )
+        return positions
+
+    def _parse_futures_order_update(self, payload: Mapping[str, Any]) -> list[WsEvent]:
+        order = payload.get("o", {})
+        symbol = normalize_symbol(str(order["s"]))
+        events = [
+            WsEvent(
+                exchange=self.exchange,
+                channel="order.update",
+                payload={
+                    "symbol": symbol,
+                    "order_id": str(order["i"]),
+                    "side": str(order["S"]).lower(),
+                    "status": str(order["X"]).lower(),
+                    "quantity": Decimal(str(order["q"])),
+                    "filled_quantity": Decimal(str(order.get("z", "0"))),
+                    "price": Decimal(str(order["p"])) if order.get("p") not in (None, "", "0") else None,
+                },
+            )
+        ]
+        last_fill = Decimal(str(order.get("l", "0")))
+        if last_fill > 0:
+            events.append(
+                WsEvent(
+                    exchange=self.exchange,
+                    channel="fill.update",
+                    payload={
+                        "symbol": symbol,
+                        "order_id": str(order["i"]),
+                        "fill_id": str(order.get("t", "")),
+                        "side": str(order["S"]).lower(),
+                        "quantity": last_fill,
+                        "price": Decimal(str(order.get("L", order.get("ap", "0")))),
+                        "fee": Decimal(str(order.get("n", "0"))),
+                        "fee_asset": order.get("N"),
+                    },
+                )
+            )
+        return events

@@ -31,3 +31,44 @@ class TestHtxWebSocket:
         events = client.parse_message({'ch': 'market.btcusdt.detail.merged', 'tick': {'bid': [100.0, 1], 'ask': [101.0, 2], 'close': 100.5}})
         assert events[0].channel == 'ticker.update'
         assert events[0].payload['last'] == Decimal('100.5')
+
+    def test_builds_private_subscribe_message(self) -> None:
+        client = HtxWebSocketClient(MarketType.PERPETUAL, private=True)
+        payload = client.build_subscribe_message('orders', symbol='BTC/USDT')
+        assert payload['action'] == 'sub'
+        assert payload['ch'] == 'orders#BTC-USDT'
+
+    def test_parses_private_order_messages(self) -> None:
+        client = HtxWebSocketClient(MarketType.PERPETUAL, private=True)
+        events = client.parse_message({
+            'ch': 'orders#BTC-USDT',
+            'data': {
+                'contract_code': 'BTC-USDT',
+                'order_id': '1',
+                'direction': 'sell',
+                'status': 'filled',
+                'volume': '2',
+                'filled_amount': '1',
+                'price': '100',
+            },
+        })
+        assert len(events) == 1
+        assert events[0].channel == 'order.update'
+        assert events[0].payload['symbol'] == 'BTC/USDT'
+
+    def test_parses_private_position_messages(self) -> None:
+        client = HtxWebSocketClient(MarketType.PERPETUAL, private=True)
+        events = client.parse_message({
+            'ch': 'positions',
+            'data': {
+                'contract_code': 'BTC-USDT',
+                'direction': 'sell',
+                'position': '-3',
+                'open_price_avg': '100',
+                'mark_price': '99.7',
+                'profit_unreal': '0.8',
+            },
+        })
+        assert len(events) == 1
+        assert events[0].channel == 'position.update'
+        assert events[0].payload['quantity'] == Decimal('3')

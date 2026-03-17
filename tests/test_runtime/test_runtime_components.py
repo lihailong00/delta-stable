@@ -10,7 +10,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from arb.exchange.base import BaseExchangeClient
-from arb.models import FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Side, Ticker
+from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Position, Side, Ticker
+from arb.runtime.private_streams import PrivateStreamService
 from arb.runtime.protocols import LiveRuntimeProtocol
 from arb.runtime.snapshots import SnapshotService
 from arb.runtime.streaming import PrivateSessionService, PublicStreamService
@@ -122,6 +123,58 @@ class _DummyExchange(BaseExchangeClient):
             order_id=order_id,
         )
 
+    async def fetch_order(
+        self,
+        order_id: str,
+        symbol: str,
+        market_type: MarketType,
+    ) -> Order:
+        return Order(
+            exchange=self.name,
+            symbol=symbol,
+            market_type=market_type,
+            side=Side.BUY,
+            quantity=Decimal("1"),
+            price=Decimal("100"),
+            status=OrderStatus.FILLED,
+            order_id=order_id,
+            filled_quantity=Decimal("1"),
+        )
+
+    async def fetch_open_orders(
+        self,
+        symbol: str | None = None,
+        market_type: MarketType = MarketType.SPOT,
+    ) -> tuple[Order, ...]:
+        return ()
+
+    async def fetch_positions(
+        self,
+        market_type: MarketType = MarketType.PERPETUAL,
+        *,
+        symbol: str | None = None,
+    ) -> tuple[Position, ...]:
+        return ()
+
+    async def fetch_fills(
+        self,
+        order_id: str,
+        symbol: str,
+        market_type: MarketType,
+    ) -> tuple[Fill, ...]:
+        return (
+            Fill(
+                exchange=self.name,
+                symbol=symbol,
+                market_type=market_type,
+                order_id=order_id,
+                fill_id="fill-1",
+                side=Side.BUY,
+                quantity=Decimal("1"),
+                price=Decimal("100"),
+            ),
+        )
+
 
 class _DummyWsClient(BaseWebSocketClient):
     def __init__(self) -> None:
@@ -140,7 +193,7 @@ class _DummyWsClient(BaseWebSocketClient):
         return [
             WsEvent(
                 exchange=self.exchange,
-                channel="orderbook.update",
+                channel=str(message.get("channel", "orderbook.update")),
                 payload={"symbol": "BTC/USDT", "raw": message["value"]},
             )
         ]
@@ -216,3 +269,21 @@ class TestRuntimeComponents:
         messages = await service.run({"op": "login", "args": ["token"]})
         assert socket.sent == [{"op": "login", "args": ["token"]}]
         assert messages == [{"event": "login", "code": "0"}]
+
+    async def test_private_stream_service_collects_normalized_private_events(self) -> None:
+        socket = _WebSocket([{"channel": "order.update", "value": "tracked"}])
+
+        async def connector(endpoint: str) -> _WebSocket:
+            assert endpoint == "wss://example.test/ws"
+            return socket
+
+        service = PrivateStreamService(_DummyWsClient(), ws_connector=connector)
+        events = await service.stream("orders")
+        assert socket.sent == [{"op": "subscribe", "channel": "orders", "symbol": None}]
+        assert events == [
+            {
+                "exchange": "dummy",
+                "channel": "order.update",
+                "payload": {"symbol": "BTC/USDT", "raw": "tracked"},
+            }
+        ]

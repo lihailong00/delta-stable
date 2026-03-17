@@ -35,6 +35,7 @@ class OkxWebSocketClient(BaseWebSocketClient):
         self.api_key = api_key
         self.api_secret = api_secret
         self.passphrase = passphrase
+        self.private = private
 
     def build_subscribe_message(
         self,
@@ -43,6 +44,11 @@ class OkxWebSocketClient(BaseWebSocketClient):
         symbol: str | None = None,
         market: str | None = None,
     ) -> Mapping[str, Any]:
+        if self.private and channel in {"orders", "positions"}:
+            args: dict[str, Any] = {"channel": channel}
+            if symbol is not None:
+                args["instId"] = self.to_exchange_symbol(symbol)
+            return {"op": "subscribe", "args": [args]}
         if symbol is None:
             raise ValueError("symbol is required for OKX subscriptions")
         return {
@@ -90,6 +96,10 @@ class OkxWebSocketClient(BaseWebSocketClient):
             return []
         channel = str(arg.get("channel"))
         payload = data[0]
+        if channel == "orders":
+            return self._parse_private_order(payload)
+        if channel == "positions":
+            return [self._parse_private_position(payload)]
         if channel == "tickers":
             return [self._parse_ticker(payload)]
         if channel == "books":
@@ -137,5 +147,58 @@ class OkxWebSocketClient(BaseWebSocketClient):
                 "funding_rate": Decimal(str(payload["fundingRate"])),
                 "next_funding_rate": Decimal(str(payload.get("nextFundingRate", payload["fundingRate"]))),
                 "next_funding_time": payload.get("nextFundingTime"),
+            },
+        )
+
+    def _parse_private_order(self, payload: Mapping[str, Any]) -> list[WsEvent]:
+        symbol = payload["instId"].replace("-SWAP", "").replace("-", "/")
+        events = [
+            WsEvent(
+                exchange=self.exchange,
+                channel="order.update",
+                payload={
+                    "symbol": symbol,
+                    "order_id": str(payload["ordId"]),
+                    "side": str(payload.get("side", "buy")).lower(),
+                    "status": str(payload.get("state", "live")).lower(),
+                    "quantity": Decimal(str(payload.get("sz", "0"))),
+                    "filled_quantity": Decimal(str(payload.get("accFillSz", "0"))),
+                    "price": Decimal(str(payload["px"])) if payload.get("px") not in (None, "", "0") else None,
+                },
+            )
+        ]
+        fill_quantity = Decimal(str(payload.get("fillSz", "0")))
+        if fill_quantity > 0:
+            events.append(
+                WsEvent(
+                    exchange=self.exchange,
+                    channel="fill.update",
+                    payload={
+                        "symbol": symbol,
+                        "order_id": str(payload["ordId"]),
+                        "fill_id": str(payload.get("tradeId", "")),
+                        "side": str(payload.get("side", "buy")).lower(),
+                        "quantity": fill_quantity,
+                        "price": Decimal(str(payload.get("fillPx", "0"))),
+                        "fee": Decimal(str(payload.get("fee", "0"))),
+                        "fee_asset": payload.get("feeCcy"),
+                    },
+                )
+            )
+        return events
+
+    def _parse_private_position(self, payload: Mapping[str, Any]) -> WsEvent:
+        quantity = Decimal(str(payload.get("pos", "0")))
+        direction = "long" if quantity > 0 or str(payload.get("posSide", "")).lower() == "long" else "short"
+        return WsEvent(
+            exchange=self.exchange,
+            channel="position.update",
+            payload={
+                "symbol": payload["instId"].replace("-SWAP", "").replace("-", "/"),
+                "direction": direction,
+                "quantity": abs(quantity),
+                "entry_price": Decimal(str(payload.get("avgPx", "0"))),
+                "mark_price": Decimal(str(payload.get("markPx", "0"))),
+                "unrealized_pnl": Decimal(str(payload.get("upl", "0"))),
             },
         )

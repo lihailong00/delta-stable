@@ -36,3 +36,63 @@ class TestBitgetWebSocket:
         assert events[0].payload['last'] == Decimal('100.5')
         assert events[1].channel == 'funding.update'
         assert events[1].payload['funding_rate'] == Decimal('0.0001')
+
+    def test_builds_private_subscribe_message(self) -> None:
+        client = BitgetWebSocketClient(MarketType.PERPETUAL, private=True)
+        payload = client.build_subscribe_message('orders', symbol='BTC/USDT')
+        assert payload['args'][0]['channel'] == 'orders'
+        assert payload['args'][0]['instId'] == 'BTCUSDT'
+
+    def test_parses_private_order_messages(self) -> None:
+        client = BitgetWebSocketClient(MarketType.PERPETUAL, private=True)
+        events = client.parse_message({
+            'arg': {'instType': 'USDT-FUTURES', 'channel': 'orders', 'instId': 'BTCUSDT'},
+            'data': [{
+                'instId': 'BTCUSDT',
+                'ordId': '1',
+                'side': 'sell',
+                'status': 'filled',
+                'sz': '2',
+                'accFillSz': '1',
+                'px': '100',
+            }],
+        })
+        assert len(events) == 1
+        assert events[0].channel == 'order.update'
+        assert events[0].payload['symbol'] == 'BTC/USDT'
+
+    def test_parses_private_fill_messages(self) -> None:
+        client = BitgetWebSocketClient(MarketType.PERPETUAL, private=True)
+        events = client.parse_message({
+            'arg': {'instType': 'USDT-FUTURES', 'channel': 'fills', 'instId': 'BTCUSDT'},
+            'data': [{
+                'instId': 'BTCUSDT',
+                'ordId': '1',
+                'tradeId': 'fill-1',
+                'side': 'sell',
+                'fillSz': '0.5',
+                'fillPx': '99.7',
+                'fee': '0.01',
+                'feeCoin': 'USDT',
+            }],
+        })
+        assert len(events) == 1
+        assert events[0].channel == 'fill.update'
+        assert events[0].payload['quantity'] == Decimal('0.5')
+
+    def test_parses_private_position_messages(self) -> None:
+        client = BitgetWebSocketClient(MarketType.PERPETUAL, private=True)
+        events = client.parse_message({
+            'arg': {'instType': 'USDT-FUTURES', 'channel': 'positions', 'instId': 'BTCUSDT'},
+            'data': [{
+                'instId': 'BTCUSDT',
+                'holdSide': 'short',
+                'pos': '-3',
+                'entryPrice': '100',
+                'markPrice': '99.5',
+                'upl': '1.1',
+            }],
+        })
+        assert len(events) == 1
+        assert events[0].channel == 'position.update'
+        assert events[0].payload['direction'] == 'short'
