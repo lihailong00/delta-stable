@@ -13,10 +13,11 @@ from .dataset_fetcher import (
 )
 from .loader import HistoricalPoint, load_points
 from .report import build_backtest_report
-from .simulator import BacktestResult, FundingBacktester
+from .simulator import BacktestResult, BacktestTrade, FundingBacktester
 
 __all__ = [
     "BacktestResult",
+    "BacktestTrade",
     "BinancePublicDataFetcher",
     "DatasetFetchError",
     "DatasetNotFoundError",
