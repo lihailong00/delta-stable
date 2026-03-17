@@ -10,8 +10,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
 from arb.execution.executor import ExecutionLeg, PairExecutor
 from arb.execution.guards import GuardContext, GuardViolation, PreTradeGuards
+from arb.execution.order_tracker import OrderTracker
 from arb.execution.router import ExecutionRouter
-from arb.models import MarketType, Order, OrderStatus, Side
+from arb.models import Fill, MarketType, Order, OrderStatus, Side
 
 @dataclass
 class _FakeClient:
@@ -34,6 +35,27 @@ class _FakeClient:
     async def cancel_order(self, order_id, symbol, market_type):
         self.canceled.append(order_id)
         return None
+
+
+@dataclass
+class _TrackingClient(_FakeClient):
+    fetched_orders: list[Order] | None = None
+    fills: list[Fill] | None = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.fetched_orders is None:
+            self.fetched_orders = []
+        if self.fills is None:
+            self.fills = []
+
+    async def fetch_order(self, order_id, symbol, market_type):
+        if self.fetched_orders:
+            return self.fetched_orders.pop(0)
+        return self.orders[min(self._index - 1, len(self.orders) - 1)]
+
+    async def fetch_fills(self, order_id, symbol, market_type):
+        return self.fills
 
 class TestPreTradeGuards:
 
@@ -82,3 +104,25 @@ class TestPairExecutor:
         assert result.status == 'failed'
         assert result.rollback_performed
         assert client_a.canceled == ['a1']
+
+    async def test_executor_uses_tracker_to_observe_partial_fill_before_adjustment(self) -> None:
+        client_a = _TrackingClient(
+            orders=[Order(exchange='okx', symbol='ETH/USDT', market_type=MarketType.SPOT, side=Side.BUY, quantity=Decimal('1'), price=Decimal('10'), status=OrderStatus.NEW, order_id='a1')],
+            fetched_orders=[Order(exchange='okx', symbol='ETH/USDT', market_type=MarketType.SPOT, side=Side.BUY, quantity=Decimal('1'), price=Decimal('10'), status=OrderStatus.FILLED, order_id='a1', filled_quantity=Decimal('1'))],
+        )
+        client_b = _TrackingClient(
+            orders=[
+                Order(exchange='okx', symbol='ETH/USDT', market_type=MarketType.PERPETUAL, side=Side.SELL, quantity=Decimal('1'), price=Decimal('10'), status=OrderStatus.NEW, order_id='b1'),
+                Order(exchange='okx', symbol='ETH/USDT', market_type=MarketType.PERPETUAL, side=Side.SELL, quantity=Decimal('0.4'), price=Decimal('10'), status=OrderStatus.NEW, order_id='b2'),
+            ],
+            fetched_orders=[Order(exchange='okx', symbol='ETH/USDT', market_type=MarketType.PERPETUAL, side=Side.SELL, quantity=Decimal('1'), price=Decimal('10'), status=OrderStatus.PARTIALLY_FILLED, order_id='b1', filled_quantity=Decimal('0.6'))],
+        )
+        context = GuardContext(available_balance=Decimal('1000'), max_notional=Decimal('1000'), supported_symbols={'ETH/USDT'})
+        executor = PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=lambda _: None))
+        result = await executor.execute_pair(
+            ExecutionLeg(client_a, 'ETH/USDT', MarketType.SPOT, 'buy', Decimal('1'), Decimal('10'), context=context),
+            ExecutionLeg(client_b, 'ETH/USDT', MarketType.PERPETUAL, 'sell', Decimal('1'), Decimal('10'), context=context),
+        )
+        assert result.status == 'adjusted'
+        assert result.orders[1].filled_quantity == Decimal('0.6')
+        assert result.adjustments[0].order_id == 'b2'

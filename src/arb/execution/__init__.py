@@ -2,6 +2,7 @@
 
 from .executor import ExecutionLeg, ExecutionResult, PairExecutor
 from .guards import GuardViolation, PreTradeGuards
+from .order_tracker import OrderTrackResult, OrderTracker
 from .router import ExecutionRouter
 
 __all__ = [
@@ -9,6 +10,8 @@ __all__ = [
     "ExecutionResult",
     "ExecutionRouter",
     "GuardViolation",
+    "OrderTrackResult",
+    "OrderTracker",
     "PairExecutor",
     "PreTradeGuards",
 ]

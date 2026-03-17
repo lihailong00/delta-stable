@@ -7,6 +7,8 @@ from decimal import Decimal
 from typing import Any
 
 from arb.execution.guards import GuardContext, PreTradeGuards
+from arb.execution.order_tracker import OrderTracker
+from arb.models import OrderStatus
 from arb.models import MarketType
 
 
@@ -34,8 +36,14 @@ class ExecutionResult:
 class PairExecutor:
     """Execute paired arbitrage legs with rollback and hedge adjustment."""
 
-    def __init__(self, guards: PreTradeGuards | None = None) -> None:
+    def __init__(
+        self,
+        guards: PreTradeGuards | None = None,
+        *,
+        tracker: OrderTracker | None = None,
+    ) -> None:
         self.guards = guards or PreTradeGuards()
+        self.tracker = tracker or OrderTracker()
 
     async def execute_pair(self, first_leg: ExecutionLeg, second_leg: ExecutionLeg) -> ExecutionResult:
         self._validate_leg(first_leg)
@@ -44,19 +52,41 @@ class PairExecutor:
         result = ExecutionResult(status="pending")
         try:
             first_order = await self._submit(first_leg)
-            result.orders.append(first_order)
             second_order = await self._submit(second_leg)
-            result.orders.append(second_order)
         except Exception as exc:
-            if result.orders:
-                await self._rollback(first_leg, result.orders[0])
+            if "first_order" in locals():
+                await self._rollback(first_leg, first_order)
                 result.rollback_performed = True
             result.status = "failed"
             result.reason = str(exc)
             return result
 
+        first_tracked = await self.tracker.track_order(
+            first_leg.client,
+            first_order,
+            symbol=first_leg.symbol,
+            market_type=first_leg.market_type,
+        )
+        second_tracked = await self.tracker.track_order(
+            second_leg.client,
+            second_order,
+            symbol=second_leg.symbol,
+            market_type=second_leg.market_type,
+        )
+        result.orders = [first_tracked.final_order, second_tracked.final_order]
+
+        if self._tracking_failed(first_tracked, second_tracked):
+            result.status = "failed"
+            result.reason = "order tracking timeout"
+            return result
+
         result.adjustments = await self.reconcile_partial_fill(first_leg, second_leg, result.orders)
-        result.status = "adjusted" if result.adjustments else "filled"
+        if result.adjustments:
+            result.status = "adjusted"
+        elif all(order.status is OrderStatus.FILLED or order.filled_quantity >= order.quantity for order in result.orders):
+            result.status = "filled"
+        else:
+            result.status = "filled"
         return result
 
     async def reconcile_partial_fill(
@@ -107,3 +137,7 @@ class PairExecutor:
             price=leg.price,
             context=leg.context,
         )
+
+    def _tracking_failed(self, first: Any, second: Any) -> bool:
+        tracks = (first, second)
+        return any(track.timed_out and track.final_order.filled_quantity == 0 for track in tracks)
