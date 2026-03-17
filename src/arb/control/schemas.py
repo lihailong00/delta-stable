@@ -62,6 +62,21 @@ class WorkflowResponse:
 
 
 @dataclass(slots=True, frozen=True)
+class FundingBoardResponse:
+    exchange: str
+    symbol: str
+    gross_rate: str
+    net_rate: str
+    annualized_net_rate: str
+    spread_bps: str
+    liquidity_usd: str
+    next_funding_time: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True, frozen=True)
 class CommandRequest:
     action: str
     target: str

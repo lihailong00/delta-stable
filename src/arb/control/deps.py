@@ -13,6 +13,7 @@ class ApiContext:
     strategies_provider: Callable[[], list[dict[str, Any]]] = field(default_factory=lambda: lambda: [])
     orders_provider: Callable[[], list[dict[str, Any]]] = field(default_factory=lambda: lambda: [])
     workflows_provider: Callable[[], list[dict[str, Any]]] = field(default_factory=lambda: lambda: [])
+    funding_board_provider: Callable[[], list[dict[str, Any]]] = field(default_factory=lambda: lambda: [])
     command_handler: Callable[[dict[str, Any]], dict[str, Any]] = field(
         default_factory=lambda: (lambda command: {"accepted": True, "command_id": "cmd-1", **command})
     )

@@ -15,6 +15,7 @@ class TestControlApi:
             strategies_provider=lambda: [{'name': 'spot_perp', 'status': 'running'}],
             orders_provider=lambda: [{'exchange': 'binance', 'symbol': 'BTC/USDT', 'market_type': 'perpetual', 'order_id': 'ord-1', 'status': 'new', 'filled_quantity': '0'}],
             workflows_provider=lambda: [{'workflow_id': 'wf-1', 'workflow_type': 'funding_spot_perp', 'exchange': 'binance', 'symbol': 'BTC/USDT', 'status': 'opening', 'payload': {'step': 'submit'}}],
+            funding_board_provider=lambda: [{'exchange': 'binance', 'symbol': 'BTC/USDT', 'gross_rate': '0.001', 'net_rate': '0.0008', 'annualized_net_rate': '0.876', 'spread_bps': '2', 'liquidity_usd': '1000000', 'next_funding_time': '2026-03-17T08:00:00+00:00'}],
             command_handler=lambda command: {'accepted': True, 'command_id': 'cmd-42', 'status': 'pending_confirmation', **command},
             command_confirmer=lambda command_id, actor: {'accepted': True, 'command_id': command_id, 'status': 'queued', 'requested_by': actor},
             command_canceller=lambda command_id, actor: {'accepted': True, 'command_id': command_id, 'status': 'canceled', 'requested_by': actor},
@@ -32,6 +33,7 @@ class TestControlApi:
         assert self.api.strategies('abc')[0]['status'] == 'running'
         assert self.api.orders('abc')[0]['order_id'] == 'ord-1'
         assert self.api.workflows('abc')[0]['workflow_id'] == 'wf-1'
+        assert self.api.funding_board('abc')[0]['net_rate'] == '0.0008'
 
     def test_command_submission(self) -> None:
         response = self.api.submit_command('abc', CommandRequest(action='close', target='spot_perp:BTC/USDT', requested_by='alice'))
@@ -46,4 +48,4 @@ class TestControlApi:
     def test_create_app_registers_routes(self) -> None:
         app = create_app(self.context)
         route_paths = {route.path for route in app.routes}
-        assert {'/health', '/positions', '/strategies', '/orders', '/workflows', '/commands', '/commands/{command_id}/confirm', '/commands/{command_id}/cancel'}.issubset(route_paths)
+        assert {'/health', '/positions', '/strategies', '/orders', '/workflows', '/funding-board', '/commands', '/commands/{command_id}/confirm', '/commands/{command_id}/cancel'}.issubset(route_paths)

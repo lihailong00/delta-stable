@@ -9,6 +9,7 @@ from arb.control.deps import ApiContext
 from arb.control.schemas import (
     CommandRequest,
     CommandResponse,
+    FundingBoardResponse,
     HealthResponse,
     OrderResponse,
     PositionResponse,
@@ -75,6 +76,10 @@ class ControlAPI:
         self.context.require_token(token)
         return [WorkflowResponse(**payload).to_dict() for payload in self.context.workflows_provider()]
 
+    def funding_board(self, token: str | None) -> list[dict[str, Any]]:
+        self.context.require_token(token)
+        return [FundingBoardResponse(**payload).to_dict() for payload in self.context.funding_board_provider()]
+
     def submit_command(self, token: str | None, request: CommandRequest) -> dict[str, Any]:
         self.context.require_token(token)
         response = self.context.command_handler(request.to_dict())
@@ -126,6 +131,10 @@ def create_app(context: ApiContext) -> Any:
     @app.get("/workflows")
     def workflows(token: str | None = None) -> list[dict[str, Any]]:
         return service.workflows(token)
+
+    @app.get("/funding-board")
+    def funding_board(token: str | None = None) -> list[dict[str, Any]]:
+        return service.funding_board(token)
 
     @app.post("/commands")
     def commands(request: dict[str, Any], token: str | None = None) -> dict[str, Any]:

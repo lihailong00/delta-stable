@@ -50,6 +50,22 @@ def build_workflows_card(workflows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def build_funding_board_card(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    lines = [
+        (
+            f"{item['exchange']} {item['symbol']} "
+            f"net={item['net_rate']} annualized={item['annualized_net_rate']} "
+            f"spread_bps={item['spread_bps']} liquidity={item['liquidity_usd']}"
+        )
+        for item in rows
+    ] or ["No funding opportunities"]
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": "Funding Board"}},
+        "elements": [{"tag": "markdown", "content": "\n".join(lines)}],
+    }
+
+
 def build_action_card(
     strategy_id: str,
     action: str,
