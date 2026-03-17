@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any
 
-from arb.models import FundingRate, MarketType, Order, OrderBook, Ticker
+from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, Position, Ticker
 
 
 class BaseExchangeClient(ABC):
@@ -85,6 +85,41 @@ class BaseExchangeClient(ABC):
         market_type: MarketType,
     ) -> Order:
         """Cancel an order and return the latest order state."""
+
+    @abstractmethod
+    async def fetch_order(
+        self,
+        order_id: str,
+        symbol: str,
+        market_type: MarketType,
+    ) -> Order:
+        """Fetch the latest state for a specific order."""
+
+    @abstractmethod
+    async def fetch_open_orders(
+        self,
+        symbol: str | None,
+        market_type: MarketType,
+    ) -> list[Order]:
+        """Fetch currently open orders, optionally scoped to one symbol."""
+
+    @abstractmethod
+    async def fetch_positions(
+        self,
+        market_type: MarketType = MarketType.PERPETUAL,
+        *,
+        symbol: str | None = None,
+    ) -> list[Position]:
+        """Fetch current positions, optionally scoped to one symbol."""
+
+    @abstractmethod
+    async def fetch_fills(
+        self,
+        order_id: str,
+        symbol: str,
+        market_type: MarketType,
+    ) -> list[Fill]:
+        """Fetch fills for a specific order."""
 
     async def fetch_many_tickers(
         self, symbols: list[str], market_type: MarketType

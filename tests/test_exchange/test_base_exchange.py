@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
 from arb.exchange.base import BaseExchangeClient
-from arb.models import FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Side, Ticker
+from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Position, PositionDirection, Side, Ticker
 from arb.utils.symbols import exchange_symbol, normalize_symbol
 
 class _DummyExchange(BaseExchangeClient):
@@ -44,6 +44,19 @@ class _DummyExchange(BaseExchangeClient):
     async def cancel_order(self, order_id: str, symbol: str, market_type: MarketType) -> Order:
         return Order(exchange=self.name, symbol=symbol, market_type=market_type, side=Side.BUY, quantity=Decimal('1'), price=Decimal('100'), status=OrderStatus.CANCELED, order_id=order_id)
 
+    async def fetch_order(self, order_id: str, symbol: str, market_type: MarketType) -> Order:
+        return Order(exchange=self.name, symbol=symbol, market_type=market_type, side=Side.BUY, quantity=Decimal('1'), price=Decimal('100'), status=OrderStatus.FILLED, order_id=order_id, filled_quantity=Decimal('1'))
+
+    async def fetch_open_orders(self, symbol: str | None, market_type: MarketType) -> list[Order]:
+        target = symbol or 'BTC/USDT'
+        return [Order(exchange=self.name, symbol=target, market_type=market_type, side=Side.BUY, quantity=Decimal('1'), price=Decimal('100'), status=OrderStatus.NEW, order_id='open-1')]
+
+    async def fetch_positions(self, market_type: MarketType=MarketType.PERPETUAL, *, symbol: str | None=None) -> list[Position]:
+        return [Position(exchange=self.name, symbol=symbol or 'BTC/USDT', market_type=market_type, direction=PositionDirection.LONG, quantity=Decimal('1'), entry_price=Decimal('100'), mark_price=Decimal('101'))]
+
+    async def fetch_fills(self, order_id: str, symbol: str, market_type: MarketType) -> list[Fill]:
+        return [Fill(exchange=self.name, symbol=symbol, market_type=market_type, side=Side.BUY, quantity=Decimal('1'), price=Decimal('100'), order_id=order_id, fill_id='fill-1')]
+
 class _IncompleteExchange(BaseExchangeClient):
     pass
 
@@ -60,9 +73,17 @@ class TestBaseExchangeClient:
         ticker = await client.fetch_ticker('BTC/USDT', MarketType.SPOT)
         balances = await client.fetch_balances()
         batch = await client.fetch_many_tickers(['BTC/USDT', 'ETH/USDT'], MarketType.SPOT)
+        order = await client.fetch_order('created', 'BTC/USDT', MarketType.SPOT)
+        open_orders = await client.fetch_open_orders('BTC/USDT', MarketType.SPOT)
+        positions = await client.fetch_positions(symbol='BTC/USDT')
+        fills = await client.fetch_fills('created', 'BTC/USDT', MarketType.SPOT)
         assert request['headers']['X-Test-Signature'] == 'GET:/ping:123'
         assert client.to_exchange_symbol('BTC/USDT') == 'BTC_USDT'
         assert client.from_exchange_symbol('BTC_USDT') == 'BTC/USDT'
         assert ticker.exchange == 'dummy'
         assert balances['USDT'] == Decimal('1000')
         assert set(batch) == {'BTC/USDT', 'ETH/USDT'}
+        assert order.status is OrderStatus.FILLED
+        assert open_orders[0].order_id == 'open-1'
+        assert positions[0].direction is PositionDirection.LONG
+        assert fills[0].fill_id == 'fill-1'

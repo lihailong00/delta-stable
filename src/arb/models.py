@@ -29,6 +29,7 @@ class OrderStatus(StrEnum):
     FILLED = "filled"
     CANCELED = "canceled"
     REJECTED = "rejected"
+    EXPIRED = "expired"
 
 
 class PositionDirection(StrEnum):
@@ -95,8 +96,34 @@ class Order:
     price: Decimal | None
     status: OrderStatus
     order_id: str | None = None
+    client_order_id: str | None = None
     filled_quantity: Decimal = Decimal("0")
     average_price: Decimal | None = None
+    reduce_only: bool = False
+    raw_status: str | None = None
+    ts: datetime = field(default_factory=utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @property
+    def remaining_quantity(self) -> Decimal:
+        return max(self.quantity - self.filled_quantity, Decimal("0"))
+
+
+@dataclass(slots=True, frozen=True)
+class Fill:
+    exchange: str
+    symbol: str
+    market_type: MarketType
+    side: Side
+    quantity: Decimal
+    price: Decimal
+    order_id: str
+    fill_id: str
+    fee: Decimal = Decimal("0")
+    fee_asset: str | None = None
+    liquidity: str | None = None
     ts: datetime = field(default_factory=utc_now)
 
     def to_dict(self) -> dict[str, Any]:
@@ -113,6 +140,10 @@ class Position:
     entry_price: Decimal
     mark_price: Decimal
     unrealized_pnl: Decimal = Decimal("0")
+    liquidation_price: Decimal | None = None
+    leverage: Decimal | None = None
+    margin_mode: str | None = None
+    position_id: str | None = None
     ts: datetime = field(default_factory=utc_now)
 
     def to_dict(self) -> dict[str, Any]:
