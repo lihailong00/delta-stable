@@ -8,6 +8,7 @@ import hmac
 from collections.abc import Mapping
 from decimal import Decimal
 
+from arb.funding import extract_funding_interval_hours
 from arb.models import MarketType
 from arb.utils.symbols import exchange_symbol, normalize_symbol
 from arb.ws.base import BaseWebSocketClient, WsEvent
@@ -157,6 +158,7 @@ class BitgetWebSocketClient(BaseWebSocketClient):
                     payload=FundingUpdatePayload(
                         symbol=normalize_symbol(symbol),
                         funding_rate=Decimal(str(funding_rate)),
+                        funding_interval_hours=extract_funding_interval_hours(payload),
                         next_funding_time=str(payload["nextFundingTime"]) if payload.get("nextFundingTime") is not None else None,
                         mark_price=Decimal(str(payload["markPrice"])) if payload.get("markPrice") is not None else None,
                     ),

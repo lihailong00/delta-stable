@@ -7,6 +7,7 @@ import hmac
 from collections.abc import Mapping
 from decimal import Decimal
 
+from arb.funding import extract_funding_interval_hours
 from arb.models import MarketType
 from arb.utils.symbols import exchange_symbol, normalize_symbol
 from arb.ws.base import BaseWebSocketClient, WsEvent
@@ -112,6 +113,7 @@ class BybitWebSocketClient(BaseWebSocketClient):
                 ask=Decimal(str(data["ask1Price"])),
                 last=Decimal(str(data["lastPrice"])),
                 funding_rate=Decimal(str(data["fundingRate"])) if data.get("fundingRate") is not None else None,
+                funding_interval_hours=extract_funding_interval_hours(data),
             ),
         )
 

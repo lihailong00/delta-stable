@@ -29,6 +29,13 @@ class TestBitgetExchange:
         assert ticker.symbol == 'BTC/USDT'
         assert ticker.bid == Decimal('100.0')
 
+    async def test_fetch_funding_rate_parses_interval_hours(self) -> None:
+        transport = AsyncMock(return_value={'code': '00000', 'data': [{'symbol': 'BTCUSDT', 'fundingRate': '0.0001', 'nextUpdate': '1700000000000', 'fundInterval': '2'}]})
+        client = BitgetExchange('key', 'secret', 'pass', transport=transport)
+        funding = await client.fetch_funding_rate('BTC/USDT')
+        assert funding.funding_interval_hours == 2
+        assert funding.rate == Decimal('0.0001')
+
     async def test_create_order_uses_mix_order_endpoint(self) -> None:
         transport = AsyncMock(return_value={'code': '00000', 'data': {'orderId': '12345'}})
         client = BitgetExchange('key', 'secret', 'pass', transport=transport)

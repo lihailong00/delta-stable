@@ -8,6 +8,7 @@ from enum import StrEnum
 
 from pydantic import Field, computed_field
 
+from arb.funding import DEFAULT_FUNDING_INTERVAL_HOURS
 from arb.schemas.base import ArbFrozenModel
 
 
@@ -79,6 +80,7 @@ class FundingRate(ArbFrozenModel):
     rate: Decimal
     next_funding_time: datetime
     predicted_rate: Decimal | None = None
+    funding_interval_hours: int = Field(default=DEFAULT_FUNDING_INTERVAL_HOURS, ge=1)
     ts: datetime = Field(default_factory=utc_now)
 
     @computed_field(return_type=str)

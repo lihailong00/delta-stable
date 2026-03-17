@@ -11,6 +11,7 @@ from decimal import Decimal
 from urllib.parse import urlencode
 
 from arb.exchange.base import BaseExchangeClient
+from arb.funding import extract_funding_interval_hours
 from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Position, PositionDirection, Side, Ticker
 from arb.net.schemas import HttpRequest, JsonValue, expect_list, expect_mapping
 from arb.schemas.base import SerializableValue
@@ -353,6 +354,7 @@ class BinanceExchange(BaseExchangeClient):
             rate=Decimal(str(payload["lastFundingRate"])),
             next_funding_time=_utc_from_millis(payload["nextFundingTime"]),
             predicted_rate=Decimal(str(payload["lastFundingRate"])),
+            funding_interval_hours=extract_funding_interval_hours(payload),
         )
 
     def _parse_order(self, payload: Mapping[str, object], market_type: MarketType) -> Order:

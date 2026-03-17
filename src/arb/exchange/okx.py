@@ -12,6 +12,7 @@ from decimal import Decimal
 from urllib.parse import urlencode
 
 from arb.exchange.base import BaseExchangeClient
+from arb.funding import extract_funding_interval_hours
 from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Position, PositionDirection, Side, Ticker
 from arb.net.schemas import HttpRequest, JsonValue
 from arb.schemas.base import SerializableValue
@@ -165,6 +166,7 @@ class OkxExchange(BaseExchangeClient):
             symbol=self.from_exchange_symbol(str(data["instId"]), MarketType.PERPETUAL),
             rate=Decimal(str(data["fundingRate"])),
             predicted_rate=Decimal(str(data.get("nextFundingRate", data["fundingRate"]))),
+            funding_interval_hours=extract_funding_interval_hours(data),
             next_funding_time=datetime.fromtimestamp(int(data["nextFundingTime"]) / 1000, tz=timezone.utc),
         )
 

@@ -29,10 +29,11 @@ class TestBybitWebSocket:
 
     def test_parses_ticker_messages(self) -> None:
         client = BybitWebSocketClient(MarketType.PERPETUAL)
-        events = client.parse_message({'topic': 'tickers.BTCUSDT', 'data': {'symbol': 'BTCUSDT', 'bid1Price': '100', 'ask1Price': '101', 'lastPrice': '100.5', 'fundingRate': '0.0001'}})
+        events = client.parse_message({'topic': 'tickers.BTCUSDT', 'data': {'symbol': 'BTCUSDT', 'bid1Price': '100', 'ask1Price': '101', 'lastPrice': '100.5', 'fundingRate': '0.0001', 'fundingIntervalHour': '1'}})
         assert events[0].channel == 'ticker.update'
         assert events[0].payload['last'] == Decimal('100.5')
         assert events[0].payload['funding_rate'] == Decimal('0.0001')
+        assert events[0].payload['funding_interval_hours'] == 1
 
     def test_builds_private_subscribe_message(self) -> None:
         client = BybitWebSocketClient(MarketType.PERPETUAL, private=True)

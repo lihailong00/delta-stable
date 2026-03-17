@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from decimal import Decimal
 
+from arb.funding import extract_funding_interval_hours
 from arb.models import MarketType
 from arb.utils.symbols import exchange_symbol, normalize_symbol
 from arb.ws.base import BaseWebSocketClient, WsEvent
@@ -117,6 +118,7 @@ class BinanceWebSocketClient(BaseWebSocketClient):
                 mark_price=Decimal(str(payload["p"])),
                 index_price=Decimal(str(payload["i"])),
                 funding_rate=Decimal(str(payload["r"])),
+                funding_interval_hours=extract_funding_interval_hours(payload),
                 next_funding_time=int(payload["T"]),
             ),
         )

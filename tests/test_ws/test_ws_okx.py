@@ -30,11 +30,12 @@ class TestOkxWebSocket:
     def test_parses_ticker_and_funding_channels(self) -> None:
         client = OkxWebSocketClient(MarketType.PERPETUAL)
         ticker_events = client.parse_message({'arg': {'channel': 'tickers', 'instId': 'BTC-USDT-SWAP'}, 'data': [{'instId': 'BTC-USDT-SWAP', 'bidPx': '100', 'askPx': '101', 'last': '100.5'}]})
-        funding_events = client.parse_message({'arg': {'channel': 'funding-rate', 'instId': 'BTC-USDT-SWAP'}, 'data': [{'instId': 'BTC-USDT-SWAP', 'fundingRate': '0.0001', 'nextFundingRate': '0.0002', 'nextFundingTime': '1700000000000'}]})
+        funding_events = client.parse_message({'arg': {'channel': 'funding-rate', 'instId': 'BTC-USDT-SWAP'}, 'data': [{'instId': 'BTC-USDT-SWAP', 'fundingRate': '0.0001', 'nextFundingRate': '0.0002', 'nextFundingTime': '1700000000000', 'fundingInterval': '4'}]})
         assert ticker_events[0].channel == 'ticker.update'
         assert ticker_events[0].payload['last'] == Decimal('100.5')
         assert funding_events[0].channel == 'funding.update'
         assert funding_events[0].payload['funding_rate'] == Decimal('0.0001')
+        assert funding_events[0].payload['funding_interval_hours'] == 4
 
     def test_builds_private_subscribe_message(self) -> None:
         client = OkxWebSocketClient(MarketType.PERPETUAL, private=True)

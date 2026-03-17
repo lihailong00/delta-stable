@@ -8,6 +8,7 @@ import hmac
 from collections.abc import Mapping
 from decimal import Decimal
 
+from arb.funding import extract_funding_interval_hours
 from arb.models import MarketType
 from arb.utils.symbols import split_symbol
 from arb.ws.base import BaseWebSocketClient, WsEvent
@@ -140,6 +141,7 @@ class OkxWebSocketClient(BaseWebSocketClient):
             payload=FundingUpdatePayload(
                 symbol=str(payload["instId"]).replace("-SWAP", "").replace("-", "/"),
                 funding_rate=Decimal(str(payload["fundingRate"])),
+                funding_interval_hours=extract_funding_interval_hours(payload),
                 next_funding_rate=Decimal(str(payload.get("nextFundingRate", payload["fundingRate"]))),
                 next_funding_time=str(payload["nextFundingTime"]) if payload.get("nextFundingTime") is not None else None,
             ),

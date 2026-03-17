@@ -6,6 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
+from arb.funding import DEFAULT_FUNDING_INTERVAL_HOURS
 from arb.models import FundingRate, MarketType, OrderBook, Ticker, utc_now
 from arb.schemas.base import ArbFrozenModel, SerializableValue
 
@@ -63,6 +64,7 @@ def coerce_funding_rate(
     data.setdefault("exchange", default_exchange or "")
     data.setdefault("symbol", default_symbol or "")
     data.setdefault("predicted_rate", data.get("rate"))
+    data.setdefault("funding_interval_hours", data.get("fundingIntervalHours", DEFAULT_FUNDING_INTERVAL_HOURS))
     data.setdefault("next_funding_time", timestamp)
     data.setdefault("ts", timestamp)
     return FundingRate.model_validate(data)

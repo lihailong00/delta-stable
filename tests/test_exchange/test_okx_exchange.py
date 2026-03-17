@@ -29,6 +29,13 @@ class TestOkxExchange:
         assert ticker.symbol == 'BTC/USDT'
         assert ticker.bid == Decimal('100.0')
 
+    async def test_fetch_funding_rate_parses_interval_hours(self) -> None:
+        transport = AsyncMock(return_value={'code': '0', 'data': [{'instId': 'BTC-USDT-SWAP', 'fundingRate': '0.0001', 'nextFundingRate': '0.0002', 'nextFundingTime': '1700000000000', 'fundingInterval': '4'}]})
+        client = OkxExchange('key', 'secret', 'pass', transport=transport)
+        funding = await client.fetch_funding_rate('BTC/USDT')
+        assert funding.funding_interval_hours == 4
+        assert funding.rate == Decimal('0.0001')
+
     async def test_build_login_args_for_ws(self) -> None:
         client = OkxExchange('key', 'secret', 'pass', transport=AsyncMock())
         args = client.build_login_args('1704876947')

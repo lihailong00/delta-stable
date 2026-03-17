@@ -30,6 +30,13 @@ class TestBybitExchange:
         assert ticker.symbol == 'BTC/USDT'
         assert ticker.last == Decimal('100.5')
 
+    async def test_fetch_funding_rate_parses_interval_hours(self) -> None:
+        transport = AsyncMock(return_value={'retCode': 0, 'result': {'list': [{'symbol': 'BTCUSDT', 'fundingRate': '0.0001', 'nextFundingTime': '1700000000000', 'fundingIntervalHour': '2'}]}})
+        client = BybitExchange('key', 'secret', transport=transport)
+        funding = await client.fetch_funding_rate('BTC/USDT')
+        assert funding.funding_interval_hours == 2
+        assert funding.rate == Decimal('0.0001')
+
     async def test_build_ws_auth_message(self) -> None:
         client = BybitExchange('key', 'secret', transport=AsyncMock())
         payload = client.build_ws_auth_message(1662350400000)

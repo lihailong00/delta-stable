@@ -23,11 +23,12 @@ class TestModelSerialization:
 
     def test_funding_order_and_position_cover_core_fields(self) -> None:
         next_time = datetime(2026, 3, 16, 0, 0, tzinfo=timezone.utc)
-        funding = FundingRate(exchange='bybit', symbol='SOL/USDT', rate=Decimal('0.0001'), predicted_rate=Decimal('0.0002'), next_funding_time=next_time)
+        funding = FundingRate(exchange='bybit', symbol='SOL/USDT', rate=Decimal('0.0001'), predicted_rate=Decimal('0.0002'), funding_interval_hours=4, next_funding_time=next_time)
         order = Order(exchange='gate', symbol='BTC/USDT', market_type=MarketType.PERPETUAL, side=Side.SELL, quantity=Decimal('1'), price=Decimal('101'), status=OrderStatus.NEW, client_order_id='client-1', filled_quantity=Decimal('0.4'), reduce_only=True, raw_status='open')
         fill = Fill(exchange='gate', symbol='BTC/USDT', market_type=MarketType.PERPETUAL, side=Side.SELL, quantity=Decimal('0.4'), price=Decimal('101'), order_id='order-1', fill_id='fill-1', fee=Decimal('0.02'), fee_asset='USDT', liquidity='maker')
         position = Position(exchange='binance', symbol='BTC/USDT', market_type=MarketType.PERPETUAL, direction=PositionDirection.SHORT, quantity=Decimal('1'), entry_price=Decimal('100'), mark_price=Decimal('99'), unrealized_pnl=Decimal('1'), liquidation_price=Decimal('120'), leverage=Decimal('3'), margin_mode='cross', position_id='pos-1')
         assert funding.to_dict()['next_funding_time'] == next_time
+        assert funding.to_dict()['funding_interval_hours'] == 4
         assert order.to_dict()['side'] == Side.SELL
         assert order.to_dict()['client_order_id'] == 'client-1'
         assert order.remaining_quantity == Decimal('0.6')

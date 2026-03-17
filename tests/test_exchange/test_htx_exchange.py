@@ -30,6 +30,13 @@ class TestHtxExchange:
         assert ticker.symbol == 'BTC/USDT'
         assert ticker.bid == Decimal('100.0')
 
+    async def test_fetch_funding_rate_parses_interval_hours(self) -> None:
+        transport = AsyncMock(return_value={'status': 'ok', 'data': {'contract_code': 'BTC-USDT', 'funding_rate': '0.0001', 'estimated_rate': '0.0002', 'next_funding_time': '1700000000000', 'funding_interval_hours': '1'}})
+        client = HtxExchange('key', 'secret', transport=transport)
+        funding = await client.fetch_funding_rate('BTC/USDT')
+        assert funding.funding_interval_hours == 1
+        assert funding.rate == Decimal('0.0001')
+
     async def test_build_ws_auth_params(self) -> None:
         client = HtxExchange('key', 'secret', transport=AsyncMock())
         params = client.build_ws_auth_params(timestamp='2020-12-08T09:08:57')

@@ -29,13 +29,14 @@ class TestBinanceExchange:
         assert ticker.ask == Decimal('101.0')
 
     async def test_fetch_funding_rate_uses_premium_index(self) -> None:
-        transport = AsyncMock(return_value={'symbol': 'BTCUSDT', 'markPrice': '11793.63104562', 'indexPrice': '11781.80495970', 'lastFundingRate': '0.00038246', 'nextFundingTime': 1597392000000})
+        transport = AsyncMock(return_value={'symbol': 'BTCUSDT', 'markPrice': '11793.63104562', 'indexPrice': '11781.80495970', 'lastFundingRate': '0.00038246', 'nextFundingTime': 1597392000000, 'fundingIntervalHours': '4'})
         client = BinanceExchange('key', 'secret', transport=transport)
         funding = await client.fetch_funding_rate('BTC/USDT')
         request = transport.await_args.args[0]
         assert request['path'] == '/fapi/v1/premiumIndex'
         assert funding.symbol == 'BTC/USDT'
         assert funding.rate == Decimal('0.00038246')
+        assert funding.funding_interval_hours == 4
 
     async def test_create_order_signs_private_requests(self) -> None:
         transport = AsyncMock(return_value={'symbol': 'BTCUSDT', 'side': 'SELL', 'origQty': '1', 'executedQty': '0', 'price': '101', 'status': 'NEW', 'orderId': 12345, 'avgPrice': '0'})

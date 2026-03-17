@@ -12,6 +12,7 @@ from decimal import Decimal
 from urllib.parse import urlencode
 
 from arb.exchange.base import BaseExchangeClient
+from arb.funding import extract_funding_interval_hours
 from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Position, PositionDirection, Side, Ticker
 from arb.net.schemas import HttpRequest, JsonValue
 from arb.schemas.base import SerializableValue
@@ -171,6 +172,7 @@ class GateExchange(BaseExchangeClient):
             symbol=self.from_exchange_symbol(str(payload["name"]), MarketType.PERPETUAL),
             rate=Decimal(str(payload.get("funding_rate", payload.get("funding_rate_indicative", "0")))),
             predicted_rate=Decimal(str(payload.get("funding_rate_indicative", payload.get("funding_rate", "0")))),
+            funding_interval_hours=extract_funding_interval_hours(payload),
             next_funding_time=datetime.fromtimestamp(int(payload["funding_next_apply"]) / 1000, tz=timezone.utc),
         )
 

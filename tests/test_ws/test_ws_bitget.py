@@ -31,11 +31,12 @@ class TestBitgetWebSocket:
 
     def test_parses_ticker_and_funding_messages(self) -> None:
         client = BitgetWebSocketClient(MarketType.PERPETUAL)
-        events = client.parse_message({'arg': {'instType': 'USDT-FUTURES', 'channel': 'ticker', 'instId': 'BTCUSDT'}, 'data': [{'instId': 'BTCUSDT', 'bidPr': '100.0', 'askPr': '101.0', 'lastPr': '100.5', 'fundingRate': '0.0001', 'nextFundingTime': '1700003600000', 'markPrice': '100.4'}]})
+        events = client.parse_message({'arg': {'instType': 'USDT-FUTURES', 'channel': 'ticker', 'instId': 'BTCUSDT'}, 'data': [{'instId': 'BTCUSDT', 'bidPr': '100.0', 'askPr': '101.0', 'lastPr': '100.5', 'fundingRate': '0.0001', 'nextFundingTime': '1700003600000', 'markPrice': '100.4', 'fundInterval': '2'}]})
         assert events[0].channel == 'ticker.update'
         assert events[0].payload['last'] == Decimal('100.5')
         assert events[1].channel == 'funding.update'
         assert events[1].payload['funding_rate'] == Decimal('0.0001')
+        assert events[1].payload['funding_interval_hours'] == 2
 
     def test_builds_private_subscribe_message(self) -> None:
         client = BitgetWebSocketClient(MarketType.PERPETUAL, private=True)

@@ -30,9 +30,10 @@ class TestBinanceWebSocket:
 
     def test_parses_mark_price_updates(self) -> None:
         client = BinanceWebSocketClient(MarketType.PERPETUAL)
-        events = client.parse_message({'e': 'markPriceUpdate', 's': 'BTCUSDT', 'p': '11794.15000000', 'i': '11784.62659091', 'r': '0.00038167', 'T': 1562306400000})
+        events = client.parse_message({'e': 'markPriceUpdate', 's': 'BTCUSDT', 'p': '11794.15000000', 'i': '11784.62659091', 'r': '0.00038167', 'T': 1562306400000, 'fundingIntervalHours': '4'})
         assert events[0].channel == 'funding.update'
         assert events[0].payload['funding_rate'] == Decimal('0.00038167')
+        assert events[0].payload['funding_interval_hours'] == 4
 
     def test_builds_private_subscribe_message(self) -> None:
         client = BinanceWebSocketClient(MarketType.PERPETUAL, private=True, listen_key='listen-key')

@@ -47,6 +47,7 @@ class TickerUpdatePayload(ArbFrozenModel):
     ask: Decimal
     last: Decimal
     funding_rate: Decimal | None = None
+    funding_interval_hours: int | None = None
 
 
 class OrderBookTickerPayload(ArbFrozenModel):
@@ -73,6 +74,7 @@ class OrderBookUpdatePayload(ArbFrozenModel):
 class FundingUpdatePayload(ArbFrozenModel):
     symbol: str
     funding_rate: Decimal
+    funding_interval_hours: int | None = None
     next_funding_time: int | str | None = None
     next_funding_rate: Decimal | None = None
     mark_price: Decimal | None = None

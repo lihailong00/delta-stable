@@ -28,6 +28,13 @@ class TestGateExchange:
         assert ticker.symbol == 'BTC/USDT'
         assert ticker.ask == Decimal('101.0')
 
+    async def test_fetch_funding_rate_parses_interval_hours(self) -> None:
+        transport = AsyncMock(return_value={'name': 'BTC_USDT', 'funding_rate': '0.0001', 'funding_rate_indicative': '0.0002', 'funding_next_apply': '1700000000000', 'funding_interval_hours': '4'})
+        client = GateExchange('key', 'secret', transport=transport)
+        funding = await client.fetch_funding_rate('BTC/USDT')
+        assert funding.funding_interval_hours == 4
+        assert funding.rate == Decimal('0.0001')
+
     async def test_create_order_signs_gate_private_requests(self) -> None:
         transport = AsyncMock(return_value={'id': '123456'})
         client = GateExchange('key', 'secret', transport=transport)

@@ -13,6 +13,7 @@ from decimal import Decimal
 from urllib.parse import urlencode
 
 from arb.exchange.base import BaseExchangeClient
+from arb.funding import extract_funding_interval_hours
 from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Position, PositionDirection, Side, Ticker
 from arb.net.schemas import HttpRequest, JsonValue
 from arb.schemas.base import SerializableValue
@@ -161,6 +162,7 @@ class BitgetExchange(BaseExchangeClient):
             symbol=self.from_exchange_symbol(str(data["symbol"]), MarketType.PERPETUAL),
             rate=Decimal(str(data["fundingRate"])),
             predicted_rate=Decimal(str(data.get("fundingRate", "0"))),
+            funding_interval_hours=extract_funding_interval_hours(data),
             next_funding_time=datetime.fromtimestamp(int(data["nextUpdate"]) / 1000, tz=timezone.utc),
         )
 
