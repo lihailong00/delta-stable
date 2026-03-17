@@ -153,6 +153,6 @@ class TestFundingArbAppBootstrap:
             assert len(result["results"][0]["opened"]) == 1
             assert len(result["results"][1]["closed"]) == 1
             assert app.control_api.strategies("secret-token")[0]["name"] == "funding_spot_perp"
-            assert app.control_api.orders("secret-token") == []
+            assert len(app.control_api.orders("secret-token")) == 4
         finally:
             temp_dir.cleanup()

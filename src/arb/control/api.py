@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from dataclasses import dataclass
 from typing import Any
 
@@ -72,23 +73,23 @@ class ControlAPI:
 
     def positions(self, token: str | None) -> list[dict[str, Any]]:
         self.context.require_token(token)
-        return [PositionResponse(**payload).to_dict() for payload in self.context.positions_provider()]
+        return [self._serialize(PositionResponse, payload) for payload in self.context.positions_provider()]
 
     def strategies(self, token: str | None) -> list[dict[str, Any]]:
         self.context.require_token(token)
-        return [StrategyResponse(**payload).to_dict() for payload in self.context.strategies_provider()]
+        return [self._serialize(StrategyResponse, payload) for payload in self.context.strategies_provider()]
 
     def orders(self, token: str | None) -> list[dict[str, Any]]:
         self.context.require_token(token)
-        return [OrderResponse(**payload).to_dict() for payload in self.context.orders_provider()]
+        return [self._serialize(OrderResponse, payload) for payload in self.context.orders_provider()]
 
     def workflows(self, token: str | None) -> list[dict[str, Any]]:
         self.context.require_token(token)
-        return [WorkflowResponse(**payload).to_dict() for payload in self.context.workflows_provider()]
+        return [self._serialize(WorkflowResponse, payload) for payload in self.context.workflows_provider()]
 
     def funding_board(self, token: str | None) -> list[dict[str, Any]]:
         self.context.require_token(token)
-        return [FundingBoardResponse(**payload).to_dict() for payload in self.context.funding_board_provider()]
+        return [self._serialize(FundingBoardResponse, payload) for payload in self.context.funding_board_provider()]
 
     def submit_command(self, token: str | None, request: CommandRequest) -> dict[str, Any]:
         self.context.require_token(token)
@@ -116,6 +117,10 @@ class ControlAPI:
             command_id=str(response["command_id"]),
             status=str(response.get("status", "canceled")),
         ).to_dict()
+
+    def _serialize(self, schema: Any, payload: dict[str, Any]) -> dict[str, Any]:
+        allowed = {item.name for item in fields(schema)}
+        return schema(**{key: value for key, value in payload.items() if key in allowed}).to_dict()
 
 
 def create_app(context: ApiContext) -> Any:
