@@ -8,7 +8,7 @@ pytestmark = pytest.mark.asyncio
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
 from arb.exchange.base import BaseExchangeClient
 from arb.market.collector import MarketDataCollector
-from arb.models import FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Side, Ticker
+from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Side, Ticker
 from arb.ws.base import BaseWebSocketClient, WsEvent
 
 class _DummyExchange(BaseExchangeClient):
@@ -42,6 +42,39 @@ class _DummyExchange(BaseExchangeClient):
 
     async def cancel_order(self, order_id: str, symbol: str, market_type: MarketType) -> Order:
         return Order(exchange=self.name, symbol=symbol, market_type=market_type, side=Side.BUY, quantity=Decimal('0'), price=None, status=OrderStatus.CANCELED, order_id=order_id)
+
+    async def fetch_order(self, order_id: str, symbol: str, market_type: MarketType) -> Order:
+        return Order(
+            exchange=self.name,
+            symbol=symbol,
+            market_type=market_type,
+            side=Side.BUY,
+            quantity=Decimal('1'),
+            price=Decimal('100'),
+            status=OrderStatus.FILLED,
+            order_id=order_id,
+            filled_quantity=Decimal('1'),
+        )
+
+    async def fetch_open_orders(self, symbol: str | None=None, market_type: MarketType=MarketType.SPOT):
+        return ()
+
+    async def fetch_positions(self, market_type: MarketType=MarketType.PERPETUAL, *, symbol: str | None=None):
+        return ()
+
+    async def fetch_fills(self, order_id: str, symbol: str, market_type: MarketType):
+        return (
+            Fill(
+                exchange=self.name,
+                symbol=symbol,
+                market_type=market_type,
+                side=Side.BUY,
+                quantity=Decimal('1'),
+                price=Decimal('100'),
+                order_id=order_id,
+                fill_id='fill-1',
+            ),
+        )
 
 class _DummyWs(BaseWebSocketClient):
 
