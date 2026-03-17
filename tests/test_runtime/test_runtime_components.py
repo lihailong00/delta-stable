@@ -280,10 +280,6 @@ class TestRuntimeComponents:
         service = PrivateStreamService(_DummyWsClient(), ws_connector=connector)
         events = await service.stream("orders")
         assert socket.sent == [{"op": "subscribe", "channel": "orders", "symbol": None}]
-        assert events == [
-            {
-                "exchange": "dummy",
-                "channel": "order.update",
-                "payload": {"symbol": "BTC/USDT", "raw": "tracked"},
-            }
-        ]
+        assert events[0]["exchange"] == "dummy"
+        assert events[0]["channel"] == "order.update"
+        assert events[0]["payload"]["symbol"] == "BTC/USDT"

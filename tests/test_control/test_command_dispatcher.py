@@ -20,7 +20,7 @@ class TestCommandDispatcher:
         )
 
     def test_command_idempotence(self) -> None:
-        command = ControlCommand('cmd-1', 'close', 'spot_perp:BTC/USDT', 'alice')
+        command = ControlCommand(command_id='cmd-1', action='close', target='spot_perp:BTC/USDT', requested_by='alice')
         first = self.dispatcher.submit(command)
         second = self.dispatcher.submit(command)
         assert first['status'] == 'queued'
@@ -28,10 +28,10 @@ class TestCommandDispatcher:
 
     def test_permissions_whitelist(self) -> None:
         with pytest.raises(PermissionError):
-            self.dispatcher.submit(ControlCommand('cmd-2', 'close', 'x', 'bob'))
+            self.dispatcher.submit(ControlCommand(command_id='cmd-2', action='close', target='x', requested_by='bob'))
 
     def test_confirmation_flow_and_dispatch(self) -> None:
-        command = ControlCommand('cmd-3', 'manual_open', 'spot_perp:BTC/USDT', 'alice')
+        command = ControlCommand(command_id='cmd-3', action='manual_open', target='spot_perp:BTC/USDT', requested_by='alice')
         pending = self.dispatcher.submit(command)
         assert pending['status'] == 'pending_confirmation'
         confirmed = self.dispatcher.confirm('cmd-3', 'alice')
@@ -41,22 +41,22 @@ class TestCommandDispatcher:
         assert self.dispatched == ['cmd-3']
 
     def test_cancel_pending_command(self) -> None:
-        command = ControlCommand('cmd-5', 'close_all', 'portfolio', 'alice')
+        command = ControlCommand(command_id='cmd-5', action='close_all', target='portfolio', requested_by='alice')
         self.dispatcher.submit(command)
         canceled = self.dispatcher.cancel('cmd-5', 'alice')
         assert canceled['status'] == 'canceled'
         assert self.dispatcher.queue_snapshot()['pending_confirmation'] == []
 
     def test_audit_log_records_actions(self) -> None:
-        command = ControlCommand('cmd-4', 'pause', 'spot_perp:ETH/USDT', 'alice')
+        command = ControlCommand(command_id='cmd-4', action='pause', target='spot_perp:ETH/USDT', requested_by='alice')
         self.dispatcher.submit(command)
         self.dispatcher.dispatch_next()
         outcomes = [record.outcome for record in self.audit.records()]
         assert outcomes == ['queued', 'done']
 
     def test_dispatch_all_flushes_queue(self) -> None:
-        self.dispatcher.submit(ControlCommand('cmd-6', 'pause', 'spot_perp:BTC/USDT', 'alice'))
-        self.dispatcher.submit(ControlCommand('cmd-7', 'pause', 'spot_perp:ETH/USDT', 'alice'))
+        self.dispatcher.submit(ControlCommand(command_id='cmd-6', action='pause', target='spot_perp:BTC/USDT', requested_by='alice'))
+        self.dispatcher.submit(ControlCommand(command_id='cmd-7', action='pause', target='spot_perp:ETH/USDT', requested_by='alice'))
 
         results = self.dispatcher.dispatch_all()
 

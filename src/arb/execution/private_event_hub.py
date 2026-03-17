@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable
+from datetime import datetime, timezone
 
 from pydantic import Field
 
@@ -50,11 +51,18 @@ class PrivateEventHub:
         self._positions: dict[str, list[PositionUpdatePayload]] = defaultdict(list)
 
     def publish(self, event: NormalizedWsEvent | dict[str, object]) -> None:
-        normalized = (
-            event
-            if isinstance(event, NormalizedWsEvent)
-            else NormalizedWsEvent.model_validate(event)
-        )
+        if isinstance(event, NormalizedWsEvent):
+            normalized = event
+        else:
+            payload = dict(event.get("payload", {})) if isinstance(event.get("payload"), dict) else {}
+            normalized = NormalizedWsEvent.model_validate(
+                {
+                    "exchange": event.get("exchange", payload.get("exchange", "")),
+                    "channel": event.get("channel", ""),
+                    "payload": payload,
+                    "received_at": event.get("received_at", datetime.now(tz=timezone.utc)),
+                }
+            )
         payload = dict(normalized.payload)
         if normalized.exchange and "exchange" not in payload:
             payload["exchange"] = normalized.exchange
