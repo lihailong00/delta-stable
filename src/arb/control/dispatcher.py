@@ -75,6 +75,26 @@ class CommandDispatcher:
         )
         return {"accepted": True, "status": "queued", "command_id": command_id}
 
+    def cancel(self, command_id: str, actor: str) -> dict[str, Any]:
+        self._authorize(actor)
+        command = self._pending_confirmations.pop(command_id, None)
+        if command is None:
+            queue_index = next(
+                (index for index, queued in enumerate(self._queue) if queued.command_id == command_id),
+                None,
+            )
+            if queue_index is None:
+                raise KeyError(command_id)
+            command = self._queue.pop(queue_index)
+        self.audit.record(
+            actor=actor,
+            source=command.source,
+            action=command.action,
+            target=command.target,
+            outcome="canceled",
+        )
+        return {"accepted": True, "status": "canceled", "command_id": command_id}
+
     def dispatch_next(self) -> dict[str, Any] | None:
         if not self._queue:
             return None
@@ -88,6 +108,12 @@ class CommandDispatcher:
             outcome=str(result.get("status", "dispatched")),
         )
         return result
+
+    def queue_snapshot(self) -> dict[str, list[str]]:
+        return {
+            "queued": [command.command_id for command in self._queue],
+            "pending_confirmation": list(self._pending_confirmations),
+        }
 
     def _authorize(self, actor: str) -> None:
         if self.allowed_users and actor not in self.allowed_users:

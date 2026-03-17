@@ -2,7 +2,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
-from arb.integrations.feishu.cards import build_action_card, build_positions_card, build_strategies_card
+from arb.integrations.feishu.cards import build_action_card, build_orders_card, build_positions_card, build_strategies_card, build_workflows_card
 from arb.integrations.feishu.client import FeishuClient
 from arb.integrations.feishu.events import FeishuEventHandler, sign_callback
 
@@ -50,13 +50,21 @@ class TestFeishuEvents:
         response = handler.parse_callback({}, payload, raw_body='{}')
         assert response['type'] == 'card_action'
         assert response['action']['action'] == 'close'
+        command = handler.to_command_payload(response)
+        assert command['requested_by'] == 'ou_xxx'
+        assert command['target'] == 'spot_perp:BTC/USDT'
 
 class TestFeishuCards:
 
     def test_cards_render_positions_and_actions(self) -> None:
         positions = build_positions_card([{'exchange': 'binance', 'symbol': 'BTC/USDT', 'direction': 'long', 'quantity': '1'}])
         strategies = build_strategies_card([{'name': 'spot_perp', 'status': 'running'}])
-        action = build_action_card('spot_perp:BTC/USDT', 'close')
+        orders = build_orders_card([{'exchange': 'binance', 'symbol': 'BTC/USDT', 'order_id': 'ord-1', 'status': 'new', 'filled_quantity': '0'}])
+        workflows = build_workflows_card([{'workflow_id': 'wf-1', 'exchange': 'binance', 'symbol': 'BTC/USDT', 'status': 'opening'}])
+        action = build_action_card('spot_perp:BTC/USDT', 'close', command_id='cmd-1')
         assert 'BTC/USDT' in positions['elements'][0]['content']
         assert 'spot_perp' in strategies['elements'][0]['content']
+        assert 'ord-1' in orders['elements'][0]['content']
+        assert 'wf-1' in workflows['elements'][0]['content']
         assert action['elements'][1]['actions'][0]['value']['action'] == 'close'
+        assert action['elements'][1]['actions'][1]['value']['action'] == 'confirm'

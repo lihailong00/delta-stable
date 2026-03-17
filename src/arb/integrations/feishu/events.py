@@ -59,3 +59,17 @@ class FeishuEventHandler:
                 "operator_id": payload.get("operator", {}).get("open_id"),
             }
         return {"type": "event", "event": payload.get("event", {})}
+
+    def to_command_payload(self, callback: Mapping[str, Any]) -> dict[str, Any]:
+        action = dict(callback.get("action", {}))
+        command: dict[str, Any] = {
+            "action": str(action.get("action", "")),
+            "requested_by": str(callback.get("operator_id", "")),
+        }
+        if "target" in action:
+            command["target"] = str(action["target"])
+        if "command_id" in action:
+            command["command_id"] = str(action["command_id"])
+        if "require_confirmation" in action:
+            command["require_confirmation"] = bool(action["require_confirmation"])
+        return command

@@ -6,7 +6,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from arb.control.deps import ApiContext
-from arb.control.schemas import CommandRequest, CommandResponse, HealthResponse, PositionResponse, StrategyResponse
+from arb.control.schemas import (
+    CommandRequest,
+    CommandResponse,
+    HealthResponse,
+    OrderResponse,
+    PositionResponse,
+    StrategyResponse,
+    WorkflowResponse,
+)
 
 try:
     from fastapi import FastAPI  # type: ignore
@@ -59,10 +67,40 @@ class ControlAPI:
         self.context.require_token(token)
         return [StrategyResponse(**payload).to_dict() for payload in self.context.strategies_provider()]
 
+    def orders(self, token: str | None) -> list[dict[str, Any]]:
+        self.context.require_token(token)
+        return [OrderResponse(**payload).to_dict() for payload in self.context.orders_provider()]
+
+    def workflows(self, token: str | None) -> list[dict[str, Any]]:
+        self.context.require_token(token)
+        return [WorkflowResponse(**payload).to_dict() for payload in self.context.workflows_provider()]
+
     def submit_command(self, token: str | None, request: CommandRequest) -> dict[str, Any]:
         self.context.require_token(token)
         response = self.context.command_handler(request.to_dict())
-        return CommandResponse(accepted=bool(response["accepted"]), command_id=str(response["command_id"])).to_dict()
+        return CommandResponse(
+            accepted=bool(response["accepted"]),
+            command_id=str(response["command_id"]),
+            status=str(response.get("status", "queued")),
+        ).to_dict()
+
+    def confirm_command(self, token: str | None, command_id: str, actor: str) -> dict[str, Any]:
+        self.context.require_token(token)
+        response = self.context.command_confirmer(command_id, actor)
+        return CommandResponse(
+            accepted=bool(response["accepted"]),
+            command_id=str(response["command_id"]),
+            status=str(response.get("status", "queued")),
+        ).to_dict()
+
+    def cancel_command(self, token: str | None, command_id: str, actor: str) -> dict[str, Any]:
+        self.context.require_token(token)
+        response = self.context.command_canceller(command_id, actor)
+        return CommandResponse(
+            accepted=bool(response["accepted"]),
+            command_id=str(response["command_id"]),
+            status=str(response.get("status", "canceled")),
+        ).to_dict()
 
 
 def create_app(context: ApiContext) -> Any:
@@ -81,8 +119,24 @@ def create_app(context: ApiContext) -> Any:
     def strategies(token: str | None = None) -> list[dict[str, Any]]:
         return service.strategies(token)
 
+    @app.get("/orders")
+    def orders(token: str | None = None) -> list[dict[str, Any]]:
+        return service.orders(token)
+
+    @app.get("/workflows")
+    def workflows(token: str | None = None) -> list[dict[str, Any]]:
+        return service.workflows(token)
+
     @app.post("/commands")
     def commands(request: dict[str, Any], token: str | None = None) -> dict[str, Any]:
         return service.submit_command(token, CommandRequest(**request))
+
+    @app.post("/commands/{command_id}/confirm")
+    def confirm(command_id: str, request: dict[str, Any], token: str | None = None) -> dict[str, Any]:
+        return service.confirm_command(token, command_id, str(request["requested_by"]))
+
+    @app.post("/commands/{command_id}/cancel")
+    def cancel(command_id: str, request: dict[str, Any], token: str | None = None) -> dict[str, Any]:
+        return service.cancel_command(token, command_id, str(request["requested_by"]))
 
     return app
