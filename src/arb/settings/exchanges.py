@@ -14,6 +14,25 @@ class ExchangeEndpointConfig:
     testnet_ws_public_url: str | None = None
     testnet_ws_private_url: str | None = None
 
+    def resolve_rest_base_url(self, *, use_testnet: bool) -> str:
+        if use_testnet:
+            if not self.testnet_rest_base_url:
+                raise ValueError("missing testnet_rest_base_url")
+            return self.testnet_rest_base_url
+        return self.rest_base_url
+
+    def resolve_ws_public_url(self, *, use_testnet: bool) -> str:
+        if use_testnet:
+            if not self.testnet_ws_public_url:
+                raise ValueError("missing testnet_ws_public_url")
+            return self.testnet_ws_public_url
+        return self.ws_public_url
+
+    def resolve_ws_private_url(self, *, use_testnet: bool) -> str | None:
+        if use_testnet:
+            return self.testnet_ws_private_url or self.testnet_ws_public_url or self.ws_private_url
+        return self.ws_private_url
+
 
 @dataclass(slots=True, frozen=True)
 class ExchangeAccountConfig:
@@ -40,3 +59,10 @@ class ExchangeSettings:
             if config.testnet and config.endpoints is not None:
                 if not config.endpoints.testnet_rest_base_url or not config.endpoints.testnet_ws_public_url:
                     raise ValueError(f"exchange {name} testnet is enabled but missing testnet endpoints")
+
+    def enabled_accounts(self) -> dict[str, ExchangeAccountConfig]:
+        return {
+            name: config
+            for name, config in self.exchanges.items()
+            if config.enabled
+        }

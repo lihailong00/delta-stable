@@ -33,6 +33,10 @@ class LiveRuntimeConfig(AppConfig):
             orders_enabled=_read_bool(source.get("ARB_ENABLE_ORDERS"), False),
         )
 
+    @property
+    def use_testnet(self) -> bool:
+        return self.mode == "testnet"
+
 
 def load_live_config(env: Mapping[str, str] | None = None) -> LiveRuntimeConfig:
     return LiveRuntimeConfig.from_env(env)

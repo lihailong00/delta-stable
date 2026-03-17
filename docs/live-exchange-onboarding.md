@@ -36,8 +36,9 @@
 - `*_SECRET`
 - `*_PASSPHRASE`：仅 OKX / Bitget 这类需要 passphrase 的交易所
 - `ARB_LIVE_ENABLED=true`
+- `ARB_RUNTIME_MODE=testnet|live`
 - `ARB_READ_ONLY=true`
-- `ARB_USE_TESTNET=true`：如果交易所支持 testnet，先开 testnet
+- 如果你使用 `src/arb/bootstrap/live_runtime_factory.py` 统一装配 runtime，`mode=testnet` 时会优先读取 `ExchangeEndpointConfig.testnet_*` 地址
 
 建议一所一组，例如：
 
@@ -48,8 +49,16 @@ export OKX_KEY=...
 export OKX_SECRET=...
 export OKX_PASSPHRASE=...
 export ARB_LIVE_ENABLED=true
+export ARB_RUNTIME_MODE=testnet
 export ARB_READ_ONLY=true
 ```
+
+`LiveRuntimeFactory` 的职责只有两件事：
+
+- 按环境变量读取每家交易所凭证
+- 按 `live/testnet` 选择 REST / WS 地址并组装对应 runtime
+
+这样上层 bootstrap、scanner、smoke、service 都不需要自己处理每家交易所的 URL 切换。
 
 ## 首次接通步骤
 
