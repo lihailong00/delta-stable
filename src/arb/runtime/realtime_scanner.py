@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from collections.abc import Awaitable, Callable
 
+from arb.market.schemas import MarketSnapshot
 from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
 from arb.runtime.pipeline import OpportunityPipeline
 from arb.scanner.funding_scanner import FundingOpportunity, FundingScanner
@@ -20,7 +21,7 @@ class RealtimeScanner:
         pipeline: OpportunityPipeline,
         *,
         interval: float = 1.0,
-        sleep: Any | None = None,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         self.manager = manager
         self.scanner = scanner
@@ -33,8 +34,8 @@ class RealtimeScanner:
         targets: list[ScanTarget],
         *,
         dry_run: bool = False,
-    ) -> dict[str, Any]:
-        snapshots = await self.manager.collect_snapshots(targets)
+    ) -> dict[str, object]:
+        snapshots: list[MarketSnapshot] = await self.manager.collect_snapshots(targets)
         opportunities = self.scanner.scan(snapshots)
         output = self.pipeline.process(snapshots, opportunities, dry_run=dry_run)
         return {
@@ -49,8 +50,8 @@ class RealtimeScanner:
         *,
         iterations: int | None = None,
         dry_run: bool = False,
-    ) -> list[dict[str, Any]]:
-        results: list[dict[str, Any]] = []
+    ) -> list[dict[str, object]]:
+        results: list[dict[str, object]] = []
         count = 0
         while iterations is None or count < iterations:
             results.append(await self.scan_once(targets, dry_run=dry_run))

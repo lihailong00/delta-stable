@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
 
 from arb.exchange.base import BaseExchangeClient
 from arb.market.collector import MarketDataCollector
+from arb.market.schemas import MarketSnapshot, NormalizedWsEvent
+from arb.market.spot_perp_view import SpotPerpSnapshot
 from arb.models import MarketType
 from arb.ws.base import BaseWebSocketClient
 
@@ -23,7 +24,7 @@ class SnapshotService:
         self,
         symbol: str,
         market_type: MarketType,
-    ) -> dict[str, Any]:
+    ) -> MarketSnapshot:
         return await self.collector.collect_snapshot(self.exchange_name, symbol, market_type)
 
     async def fetch_spot_perp_snapshot(
@@ -31,7 +32,7 @@ class SnapshotService:
         symbol: str,
         *,
         max_age_seconds: float = 3.0,
-    ) -> dict[str, Any]:
+    ) -> SpotPerpSnapshot:
         return await self.collector.collect_spot_perp_snapshot(
             self.exchange_name,
             symbol,
@@ -41,6 +42,6 @@ class SnapshotService:
     async def ingest_ws_message(
         self,
         client: BaseWebSocketClient,
-        message: Mapping[str, Any],
-    ) -> list[dict[str, Any]]:
+        message: Mapping[str, object],
+    ) -> list[NormalizedWsEvent]:
         return await self.collector.ingest_ws_message(client, message)

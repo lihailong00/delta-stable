@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from enum import StrEnum
 
-from pydantic import Field
+from pydantic import Field, computed_field
 
 from arb.schemas.base import ArbFrozenModel
 
@@ -48,6 +48,11 @@ class Ticker(ArbFrozenModel):
     last: Decimal
     ts: datetime = Field(default_factory=utc_now)
 
+    @computed_field(return_type=str)
+    @property
+    def kind(self) -> str:
+        return "ticker"
+
 
 class OrderBookLevel(ArbFrozenModel):
     price: Decimal
@@ -62,6 +67,11 @@ class OrderBook(ArbFrozenModel):
     asks: tuple[OrderBookLevel, ...]
     ts: datetime = Field(default_factory=utc_now)
 
+    @computed_field(return_type=str)
+    @property
+    def kind(self) -> str:
+        return "orderbook"
+
 
 class FundingRate(ArbFrozenModel):
     exchange: str
@@ -70,6 +80,11 @@ class FundingRate(ArbFrozenModel):
     next_funding_time: datetime
     predicted_rate: Decimal | None = None
     ts: datetime = Field(default_factory=utc_now)
+
+    @computed_field(return_type=str)
+    @property
+    def kind(self) -> str:
+        return "funding"
 
 
 class Order(ArbFrozenModel):

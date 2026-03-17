@@ -40,13 +40,23 @@ class ArbModel(BaseModel):
     )
 
     def to_dict(self) -> dict[str, SerializableValue]:
-        return self.model_dump(mode="python")
+        return self.model_dump(mode="python", by_alias=True)
 
     def __getitem__(self, item: str) -> SerializableValue:
-        return self.to_dict()[item]
+        value = getattr(self, item, None)
+        if callable(value) or (value is None and item in self.to_dict()):
+            return self.to_dict()[item]
+        if isinstance(value, Enum):
+            return value.value
+        return value
 
     def get(self, item: str, default: SerializableValue | None = None) -> SerializableValue | None:
-        return self.to_dict().get(item, default)
+        value = getattr(self, item, default)
+        if callable(value) or (value is default and item in self.to_dict()):
+            return self.to_dict().get(item, default)
+        if isinstance(value, Enum):
+            return value.value
+        return value
 
     def keys(self) -> Iterator[str]:
         return iter(self.to_dict().keys())

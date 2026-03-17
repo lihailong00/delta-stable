@@ -6,6 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 
+from arb.market.schemas import MarketSnapshot, NormalizedWsEvent
 from arb.models import FundingRate, OrderBook, Ticker
 from arb.schemas.base import SerializableValue
 from arb.ws.base import WsEvent
@@ -27,30 +28,22 @@ def _stringify(value: SerializableValue) -> SerializableValue:
     return value
 
 
-def normalize_ticker(ticker: Ticker) -> dict[str, SerializableValue]:
-    payload = ticker.to_dict()
-    payload["kind"] = "ticker"
-    return _stringify(payload)
+def normalize_ticker(ticker: Ticker) -> Ticker:
+    return ticker
 
 
-def normalize_orderbook(orderbook: OrderBook) -> dict[str, SerializableValue]:
-    payload = orderbook.to_dict()
-    payload["kind"] = "orderbook"
-    return _stringify(payload)
+def normalize_orderbook(orderbook: OrderBook) -> OrderBook:
+    return orderbook
 
 
-def normalize_funding(funding: FundingRate) -> dict[str, SerializableValue]:
-    payload = funding.to_dict()
-    payload["kind"] = "funding"
-    return _stringify(payload)
+def normalize_funding(funding: FundingRate) -> FundingRate:
+    return funding
 
 
-def normalize_ws_event(event: WsEvent) -> dict[str, SerializableValue]:
-    payload = {
-        "kind": "ws_event",
-        "exchange": event.exchange,
-        "channel": event.channel,
-        "received_at": event.received_at,
-        "payload": event.payload,
-    }
-    return _stringify(payload)
+def normalize_ws_event(event: WsEvent) -> NormalizedWsEvent:
+    return NormalizedWsEvent(
+        exchange=event.exchange,
+        channel=event.channel,
+        received_at=event.received_at,
+        payload=dict(event.payload),
+    )

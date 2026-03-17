@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
 from decimal import Decimal
-from typing import Any
+
+from arb.market.schemas import MarketSnapshot, coerce_market_snapshot
+from arb.schemas.base import ArbFrozenModel, SerializableValue
 
 from arb.scanner.cost_model import annualize_rate, estimate_net_rate
 from arb.scanner.filters import filter_opportunities
 
 
-@dataclass(slots=True, frozen=True)
-class FundingOpportunity:
+class FundingOpportunity(ArbFrozenModel):
     exchange: str
     symbol: str
     gross_rate: Decimal
@@ -45,14 +46,18 @@ class FundingScanner:
         self.whitelist = whitelist
         self.blacklist = blacklist
 
-    def scan(self, snapshots: list[dict[str, Any]]) -> list[FundingOpportunity]:
+    def scan(
+        self,
+        snapshots: list[MarketSnapshot | Mapping[str, SerializableValue]],
+    ) -> list[FundingOpportunity]:
         candidates: list[FundingOpportunity] = []
-        for snapshot in snapshots:
-            funding = snapshot.get("funding")
-            ticker = snapshot.get("ticker")
+        for raw_snapshot in snapshots:
+            snapshot = self._coerce_snapshot(raw_snapshot)
+            funding = snapshot.funding
+            ticker = snapshot.ticker
             if not funding or not ticker:
                 continue
-            gross_rate = Decimal(str(funding["rate"]))
+            gross_rate = funding.rate
             net_rate = estimate_net_rate(
                 gross_rate,
                 trading_fee_rate=self.trading_fee_rate,
@@ -60,21 +65,21 @@ class FundingScanner:
                 borrow_rate=self.borrow_rate,
                 transfer_rate=self.transfer_rate,
             )
-            bid = Decimal(str(ticker["bid"]))
-            ask = Decimal(str(ticker["ask"]))
+            bid = ticker.bid
+            ask = ticker.ask
             mid = (bid + ask) / Decimal("2")
             spread_bps = ((ask - bid) / mid) * Decimal("10000") if mid else Decimal("0")
-            liquidity_usd = snapshot.get("liquidity_usd")
+            liquidity_usd = snapshot.liquidity_usd
             if liquidity_usd is None:
-                liquidity_usd = ask * Decimal(str(snapshot.get("top_ask_size", "0")))
+                liquidity_usd = ask * (snapshot.top_ask_size or Decimal("0"))
             opportunity = FundingOpportunity(
-                exchange=str(funding["exchange"]),
-                symbol=str(funding["symbol"]),
+                exchange=funding.exchange,
+                symbol=funding.symbol,
                 gross_rate=gross_rate,
                 net_rate=net_rate,
                 annualized_net_rate=annualize_rate(net_rate),
                 spread_bps=spread_bps,
-                liquidity_usd=Decimal(str(liquidity_usd)),
+                liquidity_usd=liquidity_usd,
             )
             candidates.append(opportunity)
 
@@ -86,3 +91,11 @@ class FundingScanner:
             blacklist=self.blacklist,
         )
         return sorted(filtered, key=lambda item: item.annualized_net_rate, reverse=True)
+
+    @staticmethod
+    def _coerce_snapshot(
+        snapshot: MarketSnapshot | Mapping[str, SerializableValue],
+    ) -> MarketSnapshot:
+        if isinstance(snapshot, MarketSnapshot):
+            return snapshot
+        return coerce_market_snapshot(dict(snapshot))

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
+from arb.market.schemas import MarketSnapshot
 from arb.models import MarketType
+from arb.schemas.base import SerializableValue
 
 
 @runtime_checkable
@@ -19,7 +21,7 @@ class SnapshotRuntimeProtocol(Protocol):
         self,
         symbol: str,
         market_type: MarketType,
-    ) -> dict[str, Any]:
+    ) -> MarketSnapshot:
         """Fetch a normalized market snapshot for a symbol."""
 
 
@@ -30,7 +32,7 @@ class SmokeRuntimeProtocol(Protocol):
     async def public_ping(self) -> bool:
         """Validate that the exchange public API is reachable."""
 
-    async def validate_private_access(self) -> dict[str, Any]:
+    async def validate_private_access(self) -> dict[str, str]:
         """Validate that private API credentials can read account state."""
 
 
@@ -58,5 +60,5 @@ class SubscribableWsClient(Protocol):
         *,
         symbol: str | None = None,
         market: str | None = None,
-    ) -> Mapping[str, Any]:
+    ) -> Mapping[str, SerializableValue]:
         """Build the raw subscription payload for a public channel."""

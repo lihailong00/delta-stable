@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
 
+from arb.market.schemas import MarketSnapshot
 from arb.models import MarketType
 from arb.monitoring.alerts import Alert, AlertManager
 from arb.monitoring.health import HealthChecker
@@ -50,8 +50,8 @@ class LiveExchangeManager:
         )
         return dict(results)
 
-    async def collect_snapshots(self, targets: list[ScanTarget]) -> list[dict[str, Any]]:
-        async def collect_one(target: ScanTarget) -> dict[str, Any] | Exception:
+    async def collect_snapshots(self, targets: list[ScanTarget]) -> list[MarketSnapshot]:
+        async def collect_one(target: ScanTarget) -> MarketSnapshot | Exception:
             runtime = self.runtimes[target.exchange]
             try:
                 snapshot = await runtime.fetch_public_snapshot(target.symbol, target.market_type)

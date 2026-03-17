@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any
 
 from arb.net.ws import WebSocketSession
+from arb.market.schemas import NormalizedWsEvent
 from arb.runtime.snapshots import SnapshotService
 from arb.ws.base import BaseWebSocketClient
 
-Connector = Callable[[str], Awaitable[Any]]
+Connector = Callable[[str], Awaitable[object]]
 
 
 class PublicStreamService:
@@ -32,10 +32,10 @@ class PublicStreamService:
         *,
         symbol: str,
         max_messages: int = 1,
-    ) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
+    ) -> list[NormalizedWsEvent]:
+        events: list[NormalizedWsEvent] = []
 
-        async def on_message(message: Any) -> None:
+        async def on_message(message: object) -> None:
             normalized = await self.snapshot_service.ingest_ws_message(self.ws_client, message)
             events.extend(normalized)
 
@@ -63,10 +63,10 @@ class PrivateSessionService:
 
     async def run(
         self,
-        message: Mapping[str, Any],
+        message: Mapping[str, object],
         *,
         max_messages: int = 1,
-    ) -> list[Any]:
+    ) -> list[object]:
         session = WebSocketSession(
             self.endpoint,
             connector=self.ws_connector,

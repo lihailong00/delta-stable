@@ -5,9 +5,10 @@ from __future__ import annotations
 import inspect
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
-from typing import Any
 
-Handler = Callable[[dict[str, Any]], Any]
+from arb.market.schemas import NormalizedWsEvent
+
+Handler = Callable[[NormalizedWsEvent], object | Awaitable[object]]
 
 
 class EventRouter:
@@ -19,7 +20,7 @@ class EventRouter:
     def subscribe(self, channel: str, handler: Handler) -> None:
         self._handlers[channel].append(handler)
 
-    async def publish(self, channel: str, payload: dict[str, Any]) -> None:
+    async def publish(self, channel: str, payload: NormalizedWsEvent) -> None:
         for key in (channel, "*"):
             for handler in self._handlers.get(key, []):
                 result = handler(payload)

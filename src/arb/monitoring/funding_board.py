@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from collections.abc import Mapping
 from decimal import Decimal
-from typing import Any
+from typing import cast
 
+from arb.market.schemas import MarketSnapshot, coerce_market_snapshot
+from arb.schemas.base import ArbFrozenModel, SerializableValue
 from arb.scanner.funding_scanner import FundingOpportunity, FundingScanner
 
 
-@dataclass(slots=True, frozen=True)
-class FundingBoardRow:
+class FundingBoardRow(ArbFrozenModel):
     exchange: str
     symbol: str
     gross_rate: str
@@ -19,9 +20,6 @@ class FundingBoardRow:
     spread_bps: str
     liquidity_usd: str
     next_funding_time: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
 
 class FundingBoard:
@@ -40,15 +38,16 @@ class FundingBoard:
 
     def build_rows(
         self,
-        snapshots: list[dict[str, Any]],
+        snapshots: list[MarketSnapshot | Mapping[str, SerializableValue]],
         *,
         opportunities: list[FundingOpportunity] | None = None,
     ) -> list[FundingBoardRow]:
-        candidates = opportunities or self.scanner.scan(snapshots)
+        normalized = [self._coerce_snapshot(snapshot) for snapshot in snapshots]
+        candidates = opportunities or self.scanner.scan(normalized)
         funding_index = {
-            (str(snapshot["funding"]["exchange"]), str(snapshot["funding"]["symbol"])): snapshot["funding"]
-            for snapshot in snapshots
-            if snapshot.get("funding")
+            (snapshot.funding.exchange, snapshot.funding.symbol): snapshot.funding
+            for snapshot in normalized
+            if snapshot.funding is not None
         }
         rows = [
             FundingBoardRow(
@@ -69,12 +68,20 @@ class FundingBoard:
 
     @staticmethod
     def _next_funding_time(
-        funding_index: dict[tuple[str, str], dict[str, Any]],
+        funding_index: dict[tuple[str, str], object],
         exchange: str,
         symbol: str,
     ) -> str | None:
-        funding = funding_index.get((exchange, symbol))
+        funding = cast(object | None, funding_index.get((exchange, symbol)))
         if funding is None:
             return None
-        value = funding.get("next_funding_time")
+        value = getattr(funding, "next_funding_time", None)
         return None if value is None else str(value)
+
+    @staticmethod
+    def _coerce_snapshot(
+        snapshot: MarketSnapshot | Mapping[str, SerializableValue],
+    ) -> MarketSnapshot:
+        if isinstance(snapshot, MarketSnapshot):
+            return snapshot
+        return coerce_market_snapshot(dict(snapshot))
