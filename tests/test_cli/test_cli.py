@@ -38,3 +38,19 @@ class TestCli:
         assert result['command'] == 'smoke'
         assert result['private']
         assert result['exchange'] == ['binance', 'okx']
+
+    def test_cli_parses_funding_arb_arguments(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(['funding-arb', '--exchange', 'binance', '--symbol', 'BTC/USDT', '--iterations', '2'])
+        assert args.command == 'funding-arb'
+        assert args.exchange == ['binance']
+        assert args.iterations == 2
+
+    def test_cli_dispatches_funding_arb_dry_run_handler(self) -> None:
+        result = main(
+            ['funding-arb-dry-run', '--exchange', 'binance', '--symbol', 'BTC/USDT'],
+            handlers={'funding-arb-dry-run': lambda args: {'command': args.command, 'dry_run': True, 'exchange': args.exchange, 'symbol': args.symbol}},
+        )
+        assert result['command'] == 'funding-arb-dry-run'
+        assert result['dry_run']
+        assert result['symbol'] == ['BTC/USDT']

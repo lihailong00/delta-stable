@@ -38,6 +38,18 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--exchange", nargs="+")
     smoke.add_argument("--private", action="store_true")
 
+    funding_arb = subparsers.add_parser("funding-arb")
+    funding_arb.add_argument("--exchange", nargs="+", required=True)
+    funding_arb.add_argument("--symbol", nargs="+", required=True)
+    funding_arb.add_argument("--market-type", choices=["spot", "perpetual"], default="perpetual")
+    funding_arb.add_argument("--iterations", type=int, default=1)
+
+    funding_arb_dry_run = subparsers.add_parser("funding-arb-dry-run")
+    funding_arb_dry_run.add_argument("--exchange", nargs="+", required=True)
+    funding_arb_dry_run.add_argument("--symbol", nargs="+", required=True)
+    funding_arb_dry_run.add_argument("--market-type", choices=["spot", "perpetual"], default="perpetual")
+    funding_arb_dry_run.add_argument("--iterations", type=int, default=1)
+
     return parser
 
 
