@@ -26,7 +26,10 @@ class _DummyExchange(BaseExchangeClient):
         return symbol
 
     async def fetch_ticker(self, symbol: str, market_type: MarketType) -> Ticker:
-        return Ticker(exchange=self.name, symbol=symbol, market_type=market_type, bid=Decimal('100'), ask=Decimal('101'), last=Decimal('100.5'))
+        ts = datetime(2026, 3, 17, 0, 0 if market_type is MarketType.SPOT else 1, tzinfo=timezone.utc)
+        bid = Decimal('100') if market_type is MarketType.SPOT else Decimal('100.2')
+        ask = Decimal('101') if market_type is MarketType.SPOT else Decimal('100.4')
+        return Ticker(exchange=self.name, symbol=symbol, market_type=market_type, bid=bid, ask=ask, last=Decimal('100.5'), ts=ts)
 
     async def fetch_orderbook(self, symbol: str, market_type: MarketType, limit: int=20) -> OrderBook:
         return OrderBook(exchange=self.name, symbol=symbol, market_type=market_type, bids=(OrderBookLevel(price=Decimal('100'), size=Decimal('1')),), asks=(OrderBookLevel(price=Decimal('101'), size=Decimal('2')),))
@@ -108,3 +111,12 @@ class TestMarketDataCollector:
         assert len(events) == 1
         assert events[0]['kind'] == 'ws_event'
         assert captured[0]['channel'] == 'orderbook.update'
+
+    async def test_collect_spot_perp_snapshot_builds_combined_view(self) -> None:
+        collector = MarketDataCollector({'binance': _DummyExchange('binance')})
+        snapshot = await collector.collect_spot_perp_snapshot('binance', 'BTC/USDT', max_age_seconds=120)
+        assert snapshot['spot']['ticker']['market_type'] == 'spot'
+        assert snapshot['perp']['ticker']['market_type'] == 'perpetual'
+        assert snapshot['view']['kind'] == 'spot_perp_view'
+        assert snapshot['view']['synchronized']
+        assert Decimal(snapshot['view']['basis_bps']) < 0

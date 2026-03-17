@@ -26,6 +26,18 @@ class SnapshotService:
     ) -> dict[str, Any]:
         return await self.collector.collect_snapshot(self.exchange_name, symbol, market_type)
 
+    async def fetch_spot_perp_snapshot(
+        self,
+        symbol: str,
+        *,
+        max_age_seconds: float = 3.0,
+    ) -> dict[str, Any]:
+        return await self.collector.collect_spot_perp_snapshot(
+            self.exchange_name,
+            symbol,
+            max_age_seconds=max_age_seconds,
+        )
+
     async def ingest_ws_message(
         self,
         client: BaseWebSocketClient,

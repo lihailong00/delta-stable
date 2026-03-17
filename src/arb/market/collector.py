@@ -7,6 +7,7 @@ from typing import Any
 
 from arb.exchange.base import BaseExchangeClient
 from arb.market.normalizer import normalize_funding, normalize_orderbook, normalize_ticker, normalize_ws_event
+from arb.market.spot_perp_view import build_spot_perp_view
 from arb.market.router import EventRouter
 from arb.models import MarketType
 from arb.ws.base import BaseWebSocketClient
@@ -50,6 +51,28 @@ class MarketDataCollector:
         for exchange_name, symbol, market_type in requests:
             snapshots.append(await self.collect_snapshot(exchange_name, symbol, market_type))
         return snapshots
+
+    async def collect_spot_perp_snapshot(
+        self,
+        exchange_name: str,
+        symbol: str,
+        *,
+        max_age_seconds: float = 3.0,
+    ) -> dict[str, Any]:
+        spot_snapshot = await self.collect_snapshot(exchange_name, symbol, MarketType.SPOT)
+        perp_snapshot = await self.collect_snapshot(exchange_name, symbol, MarketType.PERPETUAL)
+        return {
+            "spot": spot_snapshot,
+            "perp": perp_snapshot,
+            "view": build_spot_perp_view(
+                exchange=exchange_name,
+                symbol=symbol,
+                spot_ticker=spot_snapshot["ticker"],
+                perp_ticker=perp_snapshot["ticker"],
+                funding=perp_snapshot["funding"],
+                max_age_seconds=max_age_seconds,
+            ),
+        }
 
     async def ingest_ws_message(
         self,
