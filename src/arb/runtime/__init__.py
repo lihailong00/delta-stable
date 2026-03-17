@@ -4,6 +4,7 @@ from .binance_runtime import BinanceRuntime
 from .bitget_runtime import BitgetRuntime
 from .bybit_runtime import BybitRuntime
 from .exchange_manager import LiveExchangeManager, ScanTarget
+from .funding_arb_service import ActiveFundingArb, FundingArbService
 from .gate_runtime import GateRuntime
 from .htx_runtime import HtxRuntime
 from .okx_runtime import OkxRuntime
@@ -25,6 +26,7 @@ __all__ = [
     "BinanceRuntime",
     "BitgetRuntime",
     "BybitRuntime",
+    "FundingArbService",
     "GateRuntime",
     "HtxRuntime",
     "LiveExchangeManager",
@@ -34,6 +36,7 @@ __all__ = [
     "PrivateSessionService",
     "PrivateWsMessageBuilder",
     "PublicStreamService",
+    "ActiveFundingArb",
     "RecoveryPlan",
     "RealtimeScanner",
     "ScanTarget",

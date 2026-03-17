@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from arb.models import MarketType
 from arb.monitoring.alerts import Alert, AlertManager
@@ -32,6 +33,7 @@ class LiveExchangeManager:
         self.runtimes = dict(runtimes)
         self.health_checker = health_checker or HealthChecker()
         self.alert_manager = alert_manager
+        self._slots: set[str] = set()
 
     async def ping_all(self) -> dict[str, bool]:
         async def ping_one(
@@ -64,6 +66,18 @@ class LiveExchangeManager:
 
     def unhealthy_exchanges(self) -> list[str]:
         return self.health_checker.unhealthy_components()
+
+    def acquire_slot(self, slot: str) -> bool:
+        if slot in self._slots:
+            return False
+        self._slots.add(slot)
+        return True
+
+    def release_slot(self, slot: str) -> None:
+        self._slots.discard(slot)
+
+    def has_slot(self, slot: str) -> bool:
+        return slot in self._slots
 
     def _emit_failure_alert(self, exchange: str, symbol: str, error: Exception) -> None:
         if self.alert_manager is None:

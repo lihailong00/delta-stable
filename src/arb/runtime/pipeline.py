@@ -60,6 +60,27 @@ class OpportunityPipeline:
                 self.publisher(message)
         return messages
 
+    def record_workflow_state(
+        self,
+        *,
+        workflow_id: str,
+        workflow_type: str,
+        exchange: str,
+        symbol: str,
+        status: str,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        self.metrics.increment(f"workflow.{status}")
+        if self.repository is not None:
+            self.repository.save_workflow_state(
+                workflow_id=workflow_id,
+                workflow_type=workflow_type,
+                exchange=exchange,
+                symbol=symbol,
+                status=status,
+                payload=payload,
+            )
+
     def format_opportunity(self, opportunity: FundingOpportunity, *, dry_run: bool = False) -> str:
         prefix = "DRY-RUN " if dry_run else ""
         return (

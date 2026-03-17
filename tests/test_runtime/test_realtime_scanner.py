@@ -15,7 +15,7 @@ from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
 from arb.runtime.pipeline import OpportunityPipeline
 from arb.runtime.protocols import SnapshotRuntimeProtocol
 from arb.runtime.realtime_scanner import RealtimeScanner
-from arb.scanner.funding_scanner import FundingScanner
+from arb.scanner.funding_scanner import FundingOpportunity, FundingScanner
 
 def _snapshot(exchange: str, symbol: str, rate: str='0.0005') -> dict[str, object]:
     ts = datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat()
@@ -63,12 +63,16 @@ class _MemoryRepository:
     def __init__(self) -> None:
         self.tickers = []
         self.funding = []
+        self.workflows = []
 
     def save_ticker(self, ticker) -> None:
         self.tickers.append(ticker)
 
     def save_funding(self, funding) -> None:
         self.funding.append(funding)
+
+    def save_workflow_state(self, **payload) -> None:
+        self.workflows.append(payload)
 
 class TestRealtimeScanner:
 
@@ -110,3 +114,25 @@ class TestRealtimeScanner:
         assert len(messages) == 1
         assert repository.tickers[0].exchange == 'binance'
         assert repository.funding[0].symbol == 'BTC/USDT'
+
+    async def test_manager_enforces_single_slot_per_symbol(self) -> None:
+        manager = LiveExchangeManager({'binance': _StaticRuntime()})
+        assert manager.acquire_slot('funding:binance:BTC/USDT')
+        assert not manager.acquire_slot('funding:binance:BTC/USDT')
+        manager.release_slot('funding:binance:BTC/USDT')
+        assert manager.acquire_slot('funding:binance:BTC/USDT')
+
+    async def test_scanner_selects_only_inactive_opportunities(self) -> None:
+        scanner = RealtimeScanner(
+            LiveExchangeManager({'binance': _StaticRuntime()}),
+            FundingScanner(min_net_rate=Decimal('0.0001')),
+            OpportunityPipeline(metrics=MetricsRegistry()),
+            interval=0,
+        )
+        opportunities = [
+            FundingOpportunity(exchange='binance', symbol='BTC/USDT', gross_rate=Decimal('0.001'), net_rate=Decimal('0.001'), annualized_net_rate=Decimal('1.095'), spread_bps=Decimal('5'), liquidity_usd=Decimal('1000')),
+            FundingOpportunity(exchange='okx', symbol='ETH/USDT', gross_rate=Decimal('0.0008'), net_rate=Decimal('0.0008'), annualized_net_rate=Decimal('0.876'), spread_bps=Decimal('4'), liquidity_usd=Decimal('1000')),
+        ]
+        selected = scanner.select_opportunities(opportunities, active_keys={'binance:BTC/USDT'})
+        assert len(selected) == 1
+        assert selected[0].exchange == 'okx'

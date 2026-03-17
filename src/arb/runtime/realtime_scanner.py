@@ -58,3 +58,24 @@ class RealtimeScanner:
             if iterations is None or count < iterations:
                 await self.sleep(self.interval)
         return results
+
+    def opportunity_key(self, opportunity: FundingOpportunity) -> str:
+        return f"{opportunity.exchange}:{opportunity.symbol}"
+
+    def select_opportunities(
+        self,
+        opportunities: list[FundingOpportunity],
+        *,
+        limit: int = 1,
+        active_keys: set[str] | None = None,
+    ) -> list[FundingOpportunity]:
+        active = active_keys or set()
+        selected: list[FundingOpportunity] = []
+        for opportunity in opportunities:
+            key = self.opportunity_key(opportunity)
+            if key in active:
+                continue
+            selected.append(opportunity)
+            if len(selected) >= limit:
+                break
+        return selected
