@@ -56,7 +56,8 @@ export ARB_READ_ONLY=true
 1. 先跑公共 smoke，确认公网 REST 正常
 2. 再跑私有 smoke，确认签名和权限正常
 3. 再跑 `live-scan --dry-run`，确认扫描链路完整
-4. 最后才考虑接真实执行
+4. 再跑 `run_funding_arb_dry_run.py`，确认主服务开平仓闭环
+5. 最后才考虑接真实执行
 
 推荐命令形态：
 
@@ -64,6 +65,7 @@ export ARB_READ_ONLY=true
 uv run arb smoke --exchange binance okx
 uv run arb smoke --exchange binance --private
 uv run arb live-scan --exchange binance okx --symbol BTC/USDT ETH/USDT --dry-run --iterations 3
+PYTHONPATH=src uv run python scripts/run_funding_arb_dry_run.py --exchange binance --symbol BTC/USDT --iterations 3 --funding-sequence 0.001 0.0008 -0.0002
 ```
 
 ## 风控建议
@@ -102,5 +104,6 @@ uv run arb live-scan --exchange binance okx --symbol BTC/USDT ETH/USDT --dry-run
 - 不自动下单
 - 不自动划转
 - 不自动做跨所资金调度
+- 先用控制 API / 飞书做人工接管
 
 先把连通性、稳定性、日志、告警跑顺，再进入实盘执行。
