@@ -3,10 +3,13 @@ name = "delta-stable"
 version = "0.1.0"
 description = "CEX funding rate arbitrage toolkit"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pydantic>=2.10.0",
+]
 
 [dependency-groups]
 dev = [
+    "mypy>=1.13.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.25.0",
 ]
