@@ -17,6 +17,7 @@ from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
 from arb.runtime.funding_arb_service import FundingArbService
 from arb.runtime.pipeline import OpportunityPipeline
 from arb.runtime.realtime_scanner import RealtimeScanner
+from arb.runtime.supervisor import RuntimeSupervisor
 from arb.scanner.funding_scanner import FundingScanner
 from arb.workflows.close_position import ClosePositionWorkflow
 from arb.workflows.open_position import OpenPositionWorkflow, VenueClients
@@ -133,6 +134,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--exchange", default=os.getenv("ARB_EXCHANGE", "binance"))
     parser.add_argument("--symbol", default=os.getenv("ARB_SYMBOL", "BTC/USDT"))
     parser.add_argument("--iterations", type=int, default=int(os.getenv("ARB_ITERATIONS", "2")))
+    parser.add_argument("--supervised", action="store_true", help="Run iterations under RuntimeSupervisor.")
+    parser.add_argument("--max-restarts", type=int, default=int(os.getenv("ARB_MAX_RESTARTS", "2")))
     parser.add_argument(
         "--funding-sequence",
         nargs="+",
@@ -168,12 +171,30 @@ async def main() -> None:
     )
     targets = [ScanTarget(args.exchange, args.symbol, MarketType.PERPETUAL)]
 
-    for index in range(args.iterations):
+    state = {"iteration": 0}
+
+    async def run_iteration() -> dict[str, object]:
+        state["iteration"] += 1
         result = await service.run_once(targets, dry_run=True)
         print(
-            f"iteration={index + 1} opened={len(result['opened'])} "
+            f"iteration={state['iteration']} opened={len(result['opened'])} "
             f"closed={len(result['closed'])} active={len(result['active'])}"
         )
+        return result
+
+    if args.supervised:
+        supervisor = RuntimeSupervisor(run_iteration, max_restarts=args.max_restarts)
+        await supervisor.run_forever(iterations=args.iterations)
+        snapshot = supervisor.snapshot()
+        print(
+            "supervisor "
+            f"completed={snapshot['completed_iterations']} restarts={snapshot['restart_count']} "
+            f"healthy={snapshot['healthy']}"
+        )
+        return
+
+    for _ in range(args.iterations):
+        await run_iteration()
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
 from arb.runtime.funding_arb_service import FundingArbService
 from arb.runtime.pipeline import OpportunityPipeline
 from arb.runtime.realtime_scanner import RealtimeScanner
+from arb.runtime.supervisor import RuntimeSupervisor
 from arb.scanner.funding_scanner import FundingScanner
 from arb.workflows.close_position import ClosePositionWorkflow
 from arb.workflows.open_position import OpenPositionWorkflow, VenueClients
@@ -183,3 +184,48 @@ async def test_funding_arb_e2e_signal_to_open_and_close() -> None:
     assert repository.workflows[-1]["status"] == "closed"
     assert len(repository.orders) == 4
     assert len(repository.positions) == 4
+
+
+@pytest.mark.asyncio
+async def test_supervisor_recovers_iteration_failure_and_runs_service() -> None:
+    runtime = _SequenceRuntime([_snapshot("0.001")])
+    manager = LiveExchangeManager({"binance": runtime})
+    repository = _Repository()
+    scanner = RealtimeScanner(
+        manager,
+        FundingScanner(min_net_rate=Decimal("0.0001")),
+        OpportunityPipeline(repository=repository),
+        interval=0,
+    )
+    spot_client = _Client(
+        orders=[_order(market_type=MarketType.SPOT, side=Side.BUY, order_id="spot-open")],
+        fetched_orders=[_order(market_type=MarketType.SPOT, side=Side.BUY, order_id="spot-open")],
+    )
+    perp_client = _Client(
+        orders=[_order(market_type=MarketType.PERPETUAL, side=Side.SELL, order_id="perp-open")],
+        fetched_orders=[_order(market_type=MarketType.PERPETUAL, side=Side.SELL, order_id="perp-open")],
+    )
+    service = FundingArbService(
+        scanner=scanner,
+        open_workflow=OpenPositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
+        close_workflow=ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
+        venues={"binance": VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
+        manager=manager,
+        pipeline=OpportunityPipeline(repository=repository),
+    )
+    targets = [ScanTarget("binance", "BTC/USDT", MarketType.PERPETUAL)]
+    state = {"fail_once": True}
+
+    async def runner():
+        if state["fail_once"]:
+            state["fail_once"] = False
+            raise RuntimeError("temporary_loop_failure")
+        return await service.run_once(targets, dry_run=True)
+
+    supervisor = RuntimeSupervisor(runner, max_restarts=1, sleep=_sleep)
+
+    results = await supervisor.run_forever(iterations=1)
+
+    assert len(results) == 1
+    assert len(results[0]["opened"]) == 1
+    assert supervisor.snapshot()["restart_count"] == 1

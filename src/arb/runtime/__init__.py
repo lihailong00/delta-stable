@@ -22,6 +22,7 @@ from .recovery import RecoveryPlan, WorkflowRecovery
 from .snapshots import SnapshotService
 from .smoke import SmokeResult, SmokeRunner
 from .streaming import PrivateSessionService, PublicStreamService
+from .supervisor import RuntimeSupervisor, SupervisorState
 
 __all__ = [
     "BinanceRuntime",
@@ -48,6 +49,8 @@ __all__ = [
     "SnapshotService",
     "SmokeResult",
     "SmokeRunner",
+    "RuntimeSupervisor",
     "SubscribableWsClient",
+    "SupervisorState",
     "WorkflowRecovery",
 ]

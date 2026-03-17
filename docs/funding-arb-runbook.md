@@ -19,6 +19,7 @@
 3. 跑 `scripts/run_funding_arb_dry_run.py`
 4. 检查工作流状态、订单状态、告警
 5. 再把 runtime 替换成真实交易所
+6. 如果要模拟守护进程异常恢复，开启 `--supervised`
 
 ## dry-run 命令
 
@@ -27,6 +28,8 @@ PYTHONPATH=src uv run python scripts/run_funding_arb_dry_run.py \
   --exchange binance \
   --symbol BTC/USDT \
   --iterations 3 \
+  --supervised \
+  --max-restarts 2 \
   --funding-sequence 0.001 0.0008 -0.0002
 ```
 
@@ -41,6 +44,7 @@ PYTHONPATH=src uv run python scripts/run_funding_arb_dry_run.py \
 iteration=1 opened=1 closed=0 active=1
 iteration=2 opened=0 closed=0 active=1
 iteration=3 opened=0 closed=1 active=0
+supervisor completed=3 restarts=0 healthy=True
 ```
 
 ## 建议环境变量
@@ -65,6 +69,7 @@ iteration=3 opened=0 closed=1 active=0
 - 确认 workflow_state 有 `opening -> open -> closing -> closed`
 - 确认控制 API 能看到 `orders` 和 `workflows`
 - 确认飞书卡片按钮能触发 `confirm / cancel`
+- 确认 supervisor 在异常时会有限次重启，而不是无限重试
 
 ## 限额建议
 
