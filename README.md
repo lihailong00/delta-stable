@@ -4,6 +4,8 @@
 
 这套代码的定位不是“已经能直接实盘跑的完整服务”，而是“实盘系统的可测试核心部件”。现在每个模块都能单独测试、单独替换，后续你可以按自己的部署方式把它们串成一个长期运行的进程或多个服务。
 
+简单使用手册见 [simple-usage-manual.md](/home/longcoding/dev/project/delta_stable/docs/simple-usage-manual.md)。
+
 ## 当前包含什么
 
 - 交易所适配：`Binance`、`OKX`、`Bybit`、`Gate`
@@ -24,15 +26,19 @@
 ### 1. 环境
 
 - Python `3.12+`
-- 当前仓库默认用 `src` 目录结构，未做 editable install，运行模块时建议显式带 `PYTHONPATH=src`
+- 推荐使用 `uv`
+
+```bash
+uv sync --group dev
+```
 
 ### 2. 运行测试
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -v
+uv run pytest -q
 ```
 
-当前仓库完整测试结果是 `99 passed`。
+当前仓库完整测试结果是 `153 passed`。
 
 ### 3. 运行 CLI
 
