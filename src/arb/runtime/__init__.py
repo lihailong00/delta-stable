@@ -3,6 +3,7 @@
 from .binance_runtime import BinanceRuntime
 from .bitget_runtime import BitgetRuntime
 from .bybit_runtime import BybitRuntime
+from .cross_exchange_funding_service import ActiveCrossExchangeArb, CrossExchangeFundingService
 from .exchange_manager import LiveExchangeManager, ScanTarget
 from .funding_arb_service import ActiveFundingArb, FundingArbService
 from .gate_runtime import GateRuntime
@@ -26,6 +27,7 @@ __all__ = [
     "BinanceRuntime",
     "BitgetRuntime",
     "BybitRuntime",
+    "CrossExchangeFundingService",
     "FundingArbService",
     "GateRuntime",
     "HtxRuntime",
@@ -37,6 +39,7 @@ __all__ = [
     "PrivateWsMessageBuilder",
     "PublicStreamService",
     "ActiveFundingArb",
+    "ActiveCrossExchangeArb",
     "RecoveryPlan",
     "RealtimeScanner",
     "ScanTarget",

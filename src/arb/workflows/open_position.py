@@ -43,6 +43,22 @@ class OpenPositionRequest:
     allow_taker_fallback: bool = True
 
 
+@dataclass(slots=True, frozen=True)
+class CrossExchangeOpenRequest:
+    symbol: str
+    quantity: Decimal
+    long_exchange: str
+    short_exchange: str
+    long_price: Decimal
+    short_price: Decimal
+    venue_clients: Mapping[str, VenueClients]
+    maker_fee_rate: Decimal = Decimal("0")
+    taker_fee_rate: Decimal = Decimal("0")
+    spread_bps: Decimal = Decimal("5")
+    max_slippage_bps: Decimal = Decimal("5")
+    urgent: bool = False
+
+
 @dataclass(slots=True)
 class OpenPositionResult:
     status: str
@@ -130,6 +146,67 @@ class OpenPositionWorkflow:
             execution=execution,
             rollback_orders=rollback_orders,
             attempts=attempts,
+        )
+
+    async def execute_cross_exchange(self, request: CrossExchangeOpenRequest) -> OpenPositionResult:
+        route = self.router.route(
+            preferred_exchange=request.short_exchange,
+            fallback_exchange=request.long_exchange,
+            exchange_available=True,
+            urgent=request.urgent,
+            maker_fee_rate=request.maker_fee_rate,
+            taker_fee_rate=request.taker_fee_rate,
+            spread_bps=request.spread_bps,
+        )
+        long_venue = request.venue_clients.get(request.long_exchange)
+        short_venue = request.venue_clients.get(request.short_exchange)
+        if long_venue is None or short_venue is None:
+            missing = request.long_exchange if long_venue is None else request.short_exchange
+            return OpenPositionResult(status="failed", reason=f"missing venue: {missing}", route=route)
+
+        long_leg = ExecutionLeg(
+            client=long_venue.perp_client,
+            symbol=request.symbol,
+            market_type=MarketType.PERPETUAL,
+            side=Side.BUY.value,
+            quantity=request.quantity,
+            price=self.router.quote_price(
+                reference_price=request.long_price,
+                side=Side.BUY,
+                mode=route.mode,
+                max_slippage_bps=request.max_slippage_bps,
+            ),
+            context=long_venue.perp_context,
+        )
+        short_leg = ExecutionLeg(
+            client=short_venue.perp_client,
+            symbol=request.symbol,
+            market_type=MarketType.PERPETUAL,
+            side=Side.SELL.value,
+            quantity=request.quantity,
+            price=self.router.quote_price(
+                reference_price=request.short_price,
+                side=Side.SELL,
+                mode=route.mode,
+                max_slippage_bps=request.max_slippage_bps,
+            ),
+            context=short_venue.perp_context,
+        )
+        execution = await self.executor.execute_pair(long_leg, short_leg)
+        if execution.status in {"filled", "adjusted"}:
+            return OpenPositionResult(
+                status="opened",
+                reason="opened",
+                route=route,
+                execution=execution,
+                attempts=1,
+            )
+        return OpenPositionResult(
+            status="failed",
+            reason=execution.reason or "open_failed",
+            route=route,
+            execution=execution,
+            attempts=1,
         )
 
     async def _attempt(

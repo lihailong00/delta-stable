@@ -44,6 +44,24 @@ class TestPerpSpreadStrategy:
         rebalance = strategy.evaluate(PerpSpreadInputs(symbol='ETH/USDT', long_exchange='okx', short_exchange='binance', long_funding_rate=Decimal('0.0001'), short_funding_rate=Decimal('0.0008'), long_price=Decimal('100'), short_price=Decimal('100'), long_quantity=Decimal('1'), short_quantity=Decimal('0.95')), state=StrategyState(is_open=True, hedge_ratio=Decimal('1')))
         assert rebalance.action == StrategyAction.REBALANCE
 
+    def test_cross_exchange_close_when_spread_compresses(self) -> None:
+        strategy = PerpSpreadStrategy(min_spread_rate=Decimal('0.0004'), close_spread_rate=Decimal('0.0001'))
+        decision = strategy.evaluate(
+            PerpSpreadInputs(
+                symbol='ETH/USDT',
+                long_exchange='okx',
+                short_exchange='binance',
+                long_funding_rate=Decimal('0.0003'),
+                short_funding_rate=Decimal('0.00035'),
+                long_price=Decimal('100'),
+                short_price=Decimal('100'),
+                long_quantity=Decimal('1'),
+                short_quantity=Decimal('1'),
+            ),
+            state=StrategyState(is_open=True, hedge_ratio=Decimal('1')),
+        )
+        assert decision.action == StrategyAction.CLOSE
+
 class TestStrategyEngine:
 
     def test_state_machine_applies_open_rebalance_close(self) -> None:
