@@ -18,6 +18,10 @@ class TestBacktest:
         points = load_points([{'ts': '2026-03-16T00:00:00+00:00', 'price': '100', 'funding_rate': '0.001', 'liquidity_usd': '100000'}, {'ts': '2026-03-16T08:00:00+00:00', 'price': '101', 'funding_rate': '-0.0002', 'liquidity_usd': '80000'}])
         result = FundingBacktester(fee_rate=Decimal('0.0001'), borrow_rate=Decimal('0.0001')).run(points, position_notional=Decimal('1000'))
         assert result.total_return == Decimal('0.4')
+        assert result.funding_pnl == Decimal('0.8')
+        assert result.borrow_cost == Decimal('0.2')
+        assert result.open_fee_cost == Decimal('0.1')
+        assert result.close_fee_cost == Decimal('0.1')
         assert len(result.equity_curve) == 2
 
     def test_fee_is_only_charged_on_entry_and_exit(self) -> None:
@@ -38,6 +42,8 @@ class TestBacktest:
         report = build_backtest_report(result)
         assert report['num_points'] == 1
         assert report['total_return'] == '0.5000'
+        assert report['funding_pnl'] == '0.5000'
+        assert report['borrow_cost'] == '0'
 
     def test_threshold_strategy_waits_opens_holds_and_closes(self) -> None:
         points = load_points([
@@ -69,3 +75,37 @@ class TestBacktest:
 
         assert result.total_return == Decimal('0.9')
         assert result.equity_curve == [Decimal('0.6'), Decimal('0.9'), Decimal('0.9')]
+
+    def test_eventized_cost_model_splits_open_close_and_borrow_costs(self) -> None:
+        points = load_points([
+            {'ts': '2026-03-16T00:00:00+00:00', 'price': '100', 'funding_rate': '0.0010', 'liquidity_usd': '100000'},
+            {'ts': '2026-03-16T08:00:00+00:00', 'price': '101', 'funding_rate': '-0.0002', 'liquidity_usd': '100000'},
+        ])
+
+        result = FundingBacktester(
+            open_fee_rate=Decimal('0.0001'),
+            close_fee_rate=Decimal('0.0002'),
+            borrow_rate=Decimal('0.0001'),
+        ).run(points, position_notional=Decimal('1000'))
+
+        assert result.funding_pnl == Decimal('0.8')
+        assert result.open_fee_cost == Decimal('0.1')
+        assert result.close_fee_cost == Decimal('0.2')
+        assert result.borrow_cost == Decimal('0.2')
+        assert result.total_return == Decimal('0.3')
+
+    def test_rebalance_fee_is_only_charged_when_price_move_exceeds_threshold(self) -> None:
+        points = load_points([
+            {'ts': '2026-03-16T00:00:00+00:00', 'price': '100', 'funding_rate': '0.0010', 'liquidity_usd': '100000'},
+            {'ts': '2026-03-16T08:00:00+00:00', 'price': '110', 'funding_rate': '0.0010', 'liquidity_usd': '100000'},
+            {'ts': '2026-03-16T16:00:00+00:00', 'price': '111', 'funding_rate': '0.0010', 'liquidity_usd': '100000'},
+        ])
+
+        result = FundingBacktester(
+            rebalance_fee_rate=Decimal('0.0002'),
+            rebalance_threshold_bps=Decimal('500'),
+        ).run(points, position_notional=Decimal('1000'))
+
+        assert result.funding_pnl == Decimal('3.0')
+        assert result.rebalance_fee_cost == Decimal('0.2')
+        assert result.total_return == Decimal('2.8')
