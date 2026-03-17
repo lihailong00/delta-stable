@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from arb.funding import DEFAULT_FUNDING_INTERVAL_HOURS
+from arb.scanner.cost_model import normalize_rate
 from arb.risk.checks import RiskAlert, RiskChecker
 
 
@@ -46,6 +48,8 @@ class PositionMonitor:
         opened_at: datetime | None,
         max_holding_period: timedelta,
         min_expected_rate: Decimal,
+        funding_interval_hours: int = DEFAULT_FUNDING_INTERVAL_HOURS,
+        comparison_interval_hours: int = DEFAULT_FUNDING_INTERVAL_HOURS,
         liquidation_price: Decimal | None = None,
         now: datetime | None = None,
     ) -> PositionMonitorDecision:
@@ -53,7 +57,11 @@ class PositionMonitor:
         funding = snapshot.get("funding", {})
         funding_alert = self.risk_checker.check_funding_reversal(
             symbol=symbol,
-            current_rate=Decimal(str(funding.get("rate", "0"))),
+            current_rate=normalize_rate(
+                Decimal(str(funding.get("rate", "0"))),
+                from_interval_hours=funding_interval_hours,
+                to_interval_hours=comparison_interval_hours,
+            ),
             min_expected_rate=min_expected_rate,
         )
         if funding_alert is not None:

@@ -19,6 +19,7 @@ from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
 from arb.runtime.funding_arb_service import FundingArbService
 from arb.runtime.pipeline import OpportunityPipeline
 from arb.scanner.funding_scanner import FundingOpportunity
+from arb.strategy.spot_perp import SpotPerpStrategy
 from arb.workflows.close_position import ClosePositionWorkflow
 from arb.workflows.open_position import OpenPositionWorkflow, VenueClients
 from tests.factories import build_market_snapshot
@@ -28,14 +29,17 @@ async def _sleep(_: float) -> None:
     return None
 
 
-def _opportunity(exchange: str, symbol: str, rate: str) -> FundingOpportunity:
+def _opportunity(exchange: str, symbol: str, rate: str, *, interval_hours: int = 8) -> FundingOpportunity:
     decimal_rate = Decimal(rate)
     return FundingOpportunity(
         exchange=exchange,
         symbol=symbol,
         gross_rate=decimal_rate,
         net_rate=decimal_rate,
-        annualized_net_rate=decimal_rate * Decimal("1095"),
+        funding_interval_hours=interval_hours,
+        hourly_net_rate=decimal_rate / Decimal(interval_hours),
+        daily_net_rate=decimal_rate * (Decimal("24") / Decimal(interval_hours)),
+        annualized_net_rate=decimal_rate * (Decimal("24") / Decimal(interval_hours)) * Decimal("365"),
         spread_bps=Decimal("2"),
         liquidity_usd=Decimal("1000"),
     )
@@ -329,3 +333,40 @@ class TestFundingArbService:
 
         assert len(result["closed"]) == 1
         assert result["closed"][0].reason == "naked_leg"
+
+    async def test_service_uses_strategy_threshold_interval_for_open_decisions(self) -> None:
+        spot_client = _Client(
+            orders=[_order(exchange="binance", symbol="BTC/USDT", market_type=MarketType.SPOT, side=Side.BUY, order_id="spot-open", status=OrderStatus.FILLED)],
+            fetched_orders=[_order(exchange="binance", symbol="BTC/USDT", market_type=MarketType.SPOT, side=Side.BUY, order_id="spot-open", status=OrderStatus.FILLED)],
+        )
+        perp_client = _Client(
+            orders=[_order(exchange="binance", symbol="BTC/USDT", market_type=MarketType.PERPETUAL, side=Side.SELL, order_id="perp-open", status=OrderStatus.FILLED)],
+            fetched_orders=[_order(exchange="binance", symbol="BTC/USDT", market_type=MarketType.PERPETUAL, side=Side.SELL, order_id="perp-open", status=OrderStatus.FILLED)],
+        )
+        strategy = SpotPerpStrategy(min_open_funding_rate=Decimal("0.00015"), threshold_interval_hours=1)
+        scanner = _SequenceScanner(
+            [
+                {
+                    "snapshots": [build_market_snapshot("binance", "BTC/USDT", rate="0.0002", funding_interval_hours=1)],
+                    "opportunities": [_opportunity("binance", "BTC/USDT", "0.0002", interval_hours=1)],
+                    "output": [],
+                }
+            ]
+        )
+        service = FundingArbService(
+            scanner=scanner,
+            open_workflow=OpenPositionWorkflow(
+                strategy=strategy,
+                executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep)),
+            ),
+            close_workflow=ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
+            venues={"binance": VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
+            manager=LiveExchangeManager({}),
+            pipeline=OpportunityPipeline(),
+            strategy=strategy,
+        )
+
+        result = await service.run_once([ScanTarget("binance", "BTC/USDT", MarketType.PERPETUAL)])
+
+        assert len(result["opened"]) == 1
+        assert result["opened"][0].status == "opened"

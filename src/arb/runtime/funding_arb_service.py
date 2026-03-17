@@ -80,6 +80,12 @@ class FundingArbService:
                 opened_at=position.opened_at,
                 max_holding_period=self.strategy.max_holding_period,
                 min_expected_rate=self.strategy.close_funding_rate,
+                funding_interval_hours=(
+                    snapshot.funding.funding_interval_hours
+                    if snapshot.funding is not None
+                    else self.strategy.threshold_interval_hours
+                ),
+                comparison_interval_hours=self.strategy.threshold_interval_hours,
                 liquidation_price=position.liquidation_price,
                 now=current_time,
             )
@@ -94,6 +100,11 @@ class FundingArbService:
                 SpotPerpInputs(
                     symbol=position.symbol,
                     funding_rate=snapshot.funding.rate if snapshot.funding is not None else Decimal("0"),
+                    funding_interval_hours=(
+                        snapshot.funding.funding_interval_hours
+                        if snapshot.funding is not None
+                        else self.strategy.threshold_interval_hours
+                    ),
                     spot_price=snapshot.ticker.ask,
                     perp_price=snapshot.ticker.bid,
                     spot_quantity=position.spot_quantity,
@@ -174,6 +185,7 @@ class FundingArbService:
                 symbol=opportunity.symbol,
                 quantity=self.position_quantity,
                 funding_rate=opportunity.gross_rate,
+                funding_interval_hours=opportunity.funding_interval_hours,
                 spot_price=snapshot.ticker.ask,
                 perp_price=snapshot.ticker.bid,
                 venue_clients={opportunity.exchange: self.venues[opportunity.exchange]},
@@ -228,7 +240,14 @@ class FundingArbService:
                 perp_price=snapshot.ticker.ask,
                 venue_clients={position.exchange: self.venues[position.exchange]},
                 preferred_exchange=position.exchange,
-                funding_rate=snapshot.funding.rate if snapshot.funding is not None else Decimal("0"),
+                funding_rate=(
+                    self.strategy.normalize_funding_rate(
+                        snapshot.funding.rate,
+                        interval_hours=snapshot.funding.funding_interval_hours,
+                    )
+                    if snapshot.funding is not None
+                    else Decimal("0")
+                ),
                 min_expected_rate=self.strategy.close_funding_rate,
                 opened_at=position.opened_at,
                 max_holding_period=self.strategy.max_holding_period,

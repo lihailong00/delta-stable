@@ -48,3 +48,23 @@ class TestPositionMonitor:
 
         assert decision.should_close is True
         assert decision.close_reason == "naked_leg"
+
+    def test_monitor_normalizes_funding_rate_before_reversal_check(self) -> None:
+        monitor = PositionMonitor()
+        decision = monitor.evaluate(
+            symbol="BTC/USDT",
+            snapshot={
+                "ticker": {"bid": "100", "ask": "100.2", "last": "100.1"},
+                "funding": {"rate": "0.0008"},
+            },
+            spot_quantity=Decimal("1"),
+            perp_quantity=Decimal("1"),
+            opened_at=datetime.now(tz=timezone.utc) - timedelta(minutes=5),
+            max_holding_period=timedelta(hours=8),
+            min_expected_rate=Decimal("0.0002"),
+            funding_interval_hours=8,
+            comparison_interval_hours=1,
+        )
+
+        assert decision.should_close is True
+        assert decision.close_reason == "funding_reversal"

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
+from arb.funding import DEFAULT_FUNDING_INTERVAL_HOURS
 from arb.execution.executor import ExecutionLeg, ExecutionResult, PairExecutor
 from arb.execution.guards import GuardContext
 from arb.execution.router import ExecutionRouter, RouteDecision
@@ -33,6 +34,7 @@ class OpenPositionRequest:
     perp_price: Decimal
     venue_clients: Mapping[str, VenueClients]
     preferred_exchange: str
+    funding_interval_hours: int = DEFAULT_FUNDING_INTERVAL_HOURS
     fallback_exchange: str | None = None
     exchange_available: bool = True
     maker_fee_rate: Decimal = Decimal("0")
@@ -90,6 +92,7 @@ class OpenPositionWorkflow:
             SpotPerpInputs(
                 symbol=request.symbol,
                 funding_rate=request.funding_rate,
+                funding_interval_hours=request.funding_interval_hours,
                 spot_price=request.spot_price,
                 perp_price=request.perp_price,
             )

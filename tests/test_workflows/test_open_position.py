@@ -13,6 +13,7 @@ from arb.execution.executor import PairExecutor
 from arb.execution.guards import GuardContext
 from arb.execution.order_tracker import OrderTracker
 from arb.models import MarketType, Order, OrderStatus, Side
+from arb.strategy.spot_perp import SpotPerpStrategy
 from arb.workflows.open_position import OpenPositionRequest, OpenPositionWorkflow, VenueClients
 
 
@@ -132,19 +133,22 @@ class _Client:
 
 
 def _request(*, venue: VenueClients, **kwargs: object) -> OpenPositionRequest:
+    defaults: dict[str, object] = {
+        "funding_rate": Decimal("0.001"),
+        "spot_price": Decimal("100"),
+        "perp_price": Decimal("100.2"),
+        "maker_fee_rate": Decimal("0.0001"),
+        "taker_fee_rate": Decimal("0.0004"),
+        "spread_bps": Decimal("5"),
+        "max_slippage_bps": Decimal("10"),
+    }
+    defaults.update(kwargs)
     return OpenPositionRequest(
         symbol="BTC/USDT",
         quantity=Decimal("1"),
-        funding_rate=Decimal("0.001"),
-        spot_price=Decimal("100"),
-        perp_price=Decimal("100.2"),
         venue_clients={venue.exchange: venue},
         preferred_exchange=venue.exchange,
-        maker_fee_rate=Decimal("0.0001"),
-        taker_fee_rate=Decimal("0.0004"),
-        spread_bps=Decimal("5"),
-        max_slippage_bps=Decimal("10"),
-        **kwargs,
+        **defaults,
     )
 
 
@@ -246,3 +250,21 @@ class TestOpenPositionWorkflow:
         assert len(result.rollback_orders) == 1
         assert spot_client.submitted[-1]["side"] == "sell"
         assert spot_client.submitted[-1]["quantity"] == Decimal("1")
+
+    async def test_open_position_rejects_when_normalized_funding_is_below_threshold(self) -> None:
+        venue = VenueClients(exchange="binance", spot_client=_Client(orders=[]), perp_client=_Client(orders=[]))
+        workflow = OpenPositionWorkflow(
+            strategy=SpotPerpStrategy(min_open_funding_rate=Decimal("0.0001"), threshold_interval_hours=1),
+            executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep)),
+        )
+
+        result = await workflow.execute(
+            _request(
+                venue=venue,
+                funding_rate=Decimal("0.0006"),
+                funding_interval_hours=8,
+            )
+        )
+
+        assert result.status == "rejected"
+        assert result.reason == "funding_below_threshold"

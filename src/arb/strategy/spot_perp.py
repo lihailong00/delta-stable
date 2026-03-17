@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+from arb.funding import DEFAULT_FUNDING_INTERVAL_HOURS
+from arb.scanner.cost_model import normalize_rate
 from arb.strategy.engine import StrategyAction, StrategyDecision, StrategyState
 
 
@@ -19,6 +21,7 @@ class SpotPerpInputs:
     funding_rate: Decimal
     spot_price: Decimal
     perp_price: Decimal
+    funding_interval_hours: int = DEFAULT_FUNDING_INTERVAL_HOURS
     spot_quantity: Decimal = Decimal("0")
     perp_quantity: Decimal = Decimal("0")
 
@@ -28,6 +31,7 @@ class EntryQuoteCheck:
     accepted: bool
     reason: str
     basis_bps: Decimal
+    normalized_funding_rate: Decimal = Decimal("0")
 
 
 class SpotPerpStrategy:
@@ -38,12 +42,14 @@ class SpotPerpStrategy:
         *,
         min_open_funding_rate: Decimal = Decimal("0.0005"),
         close_funding_rate: Decimal = Decimal("0"),
+        threshold_interval_hours: int = DEFAULT_FUNDING_INTERVAL_HOURS,
         max_basis_bps: Decimal = Decimal("25"),
         rebalance_threshold: Decimal = Decimal("0.05"),
         max_holding_period: timedelta = timedelta(days=5),
     ) -> None:
         self.min_open_funding_rate = min_open_funding_rate
         self.close_funding_rate = close_funding_rate
+        self.threshold_interval_hours = threshold_interval_hours
         self.max_basis_bps = max_basis_bps
         self.rebalance_threshold = rebalance_threshold
         self.max_holding_period = max_holding_period
@@ -65,11 +71,27 @@ class SpotPerpStrategy:
 
     def check_entry_quote(self, inputs: SpotPerpInputs) -> EntryQuoteCheck:
         basis = self.basis_bps(inputs.spot_price, inputs.perp_price)
-        if inputs.funding_rate < self.min_open_funding_rate:
-            return EntryQuoteCheck(False, "funding_below_threshold", basis)
+        normalized_funding_rate = self.normalize_funding_rate(
+            inputs.funding_rate,
+            interval_hours=inputs.funding_interval_hours,
+        )
+        if normalized_funding_rate < self.min_open_funding_rate:
+            return EntryQuoteCheck(False, "funding_below_threshold", basis, normalized_funding_rate)
         if abs(basis) > self.max_basis_bps:
-            return EntryQuoteCheck(False, "basis_out_of_range", basis)
-        return EntryQuoteCheck(True, "quote_accepted", basis)
+            return EntryQuoteCheck(False, "basis_out_of_range", basis, normalized_funding_rate)
+        return EntryQuoteCheck(True, "quote_accepted", basis, normalized_funding_rate)
+
+    def normalize_funding_rate(
+        self,
+        funding_rate: Decimal,
+        *,
+        interval_hours: int,
+    ) -> Decimal:
+        return normalize_rate(
+            funding_rate,
+            from_interval_hours=interval_hours,
+            to_interval_hours=self.threshold_interval_hours,
+        )
 
     def evaluate(
         self,
@@ -93,11 +115,27 @@ class SpotPerpStrategy:
                     StrategyAction.OPEN,
                     reason=quote_check.reason,
                     target_hedge_ratio=Decimal("1"),
-                    metadata={"symbol": inputs.symbol},
+                    metadata={
+                        "symbol": inputs.symbol,
+                        "normalized_funding_rate": quote_check.normalized_funding_rate,
+                        "threshold_interval_hours": self.threshold_interval_hours,
+                    },
                 )
-            return StrategyDecision(StrategyAction.HOLD, reason=quote_check.reason, metadata={"symbol": inputs.symbol})
+            return StrategyDecision(
+                StrategyAction.HOLD,
+                reason=quote_check.reason,
+                metadata={
+                    "symbol": inputs.symbol,
+                    "normalized_funding_rate": quote_check.normalized_funding_rate,
+                    "threshold_interval_hours": self.threshold_interval_hours,
+                },
+            )
 
-        if inputs.funding_rate <= self.close_funding_rate:
+        normalized_funding_rate = self.normalize_funding_rate(
+            inputs.funding_rate,
+            interval_hours=inputs.funding_interval_hours,
+        )
+        if normalized_funding_rate <= self.close_funding_rate:
             return StrategyDecision(StrategyAction.CLOSE, reason="funding_reversed", metadata={"symbol": inputs.symbol})
 
         if current_state.opened_at and current_time - current_state.opened_at > self.max_holding_period:

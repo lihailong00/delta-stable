@@ -35,6 +35,34 @@ class TestSpotPerpStrategy:
         decision = strategy.evaluate(SpotPerpInputs(symbol='BTC/USDT', funding_rate=Decimal('0.001'), spot_price=Decimal('100'), perp_price=Decimal('100')), state=state)
         assert decision.action == StrategyAction.CLOSE
 
+    def test_thresholds_can_compare_on_hourly_basis(self) -> None:
+        strategy = SpotPerpStrategy(
+            min_open_funding_rate=Decimal('0.0001'),
+            close_funding_rate=Decimal('0.00015'),
+            threshold_interval_hours=1,
+        )
+        open_decision = strategy.evaluate(
+            SpotPerpInputs(
+                symbol='BTC/USDT',
+                funding_rate=Decimal('0.0008'),
+                funding_interval_hours=8,
+                spot_price=Decimal('100'),
+                perp_price=Decimal('100.1'),
+            )
+        )
+        close_decision = strategy.evaluate(
+            SpotPerpInputs(
+                symbol='BTC/USDT',
+                funding_rate=Decimal('0.0008'),
+                funding_interval_hours=8,
+                spot_price=Decimal('100'),
+                perp_price=Decimal('100'),
+            ),
+            state=StrategyState(is_open=True, opened_at=datetime.now(tz=timezone.utc), hedge_ratio=Decimal('1')),
+        )
+        assert open_decision.action == StrategyAction.OPEN
+        assert close_decision.action == StrategyAction.CLOSE
+
 class TestPerpSpreadStrategy:
 
     def test_cross_exchange_open_and_rebalance(self) -> None:
