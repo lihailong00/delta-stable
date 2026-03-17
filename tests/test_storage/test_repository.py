@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
-from arb.models import FundingRate, MarketType, Order, OrderStatus, Position, PositionDirection, Side, Ticker
+from arb.models import Fill, FundingRate, MarketType, Order, OrderStatus, Position, PositionDirection, Side, Ticker
 from arb.storage.db import Database
 from arb.storage.repository import Repository
 
@@ -25,7 +25,7 @@ class TestRepository:
     def test_initialize_creates_schema_tables(self) -> None:
         with sqlite3.connect(self.db_path) as connection:
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-        assert {'orders', 'fills', 'positions', 'funding_snapshots', 'ticks'}.issubset(tables)
+        assert {'orders', 'fills', 'positions', 'funding_snapshots', 'ticks', 'workflow_state', 'order_status_history'}.issubset(tables)
 
     def test_save_order_and_position(self) -> None:
         order = Order(exchange='binance', symbol='BTC/USDT', market_type=MarketType.PERPETUAL, side=Side.SELL, quantity=Decimal('1'), price=Decimal('100'), status=OrderStatus.NEW, order_id='ord-1')
@@ -36,6 +36,7 @@ class TestRepository:
         positions = self.repository.list_positions()
         assert orders[0]['order_id'] == 'ord-1'
         assert positions[0]['direction'] == 'short'
+        assert self.repository.list_order_status_history('ord-1')[0]['status'] == 'new'
 
     def test_save_funding_and_query_history(self) -> None:
         now = datetime(2026, 3, 16, tzinfo=timezone.utc)
@@ -49,9 +50,26 @@ class TestRepository:
     def test_save_ticker_and_fill(self) -> None:
         ticker = Ticker(exchange='gate', symbol='ETH/USDT', market_type=MarketType.SPOT, bid=Decimal('10'), ask=Decimal('11'), last=Decimal('10.5'))
         self.repository.save_ticker(ticker)
-        self.repository.save_fill({'fill_id': 'fill-1', 'order_id': 'ord-1', 'exchange': 'gate', 'symbol': 'ETH/USDT', 'side': 'buy', 'quantity': '2', 'price': '10.5', 'ts': '2026-03-16T00:00:00+00:00'})
+        self.repository.save_fill(Fill(exchange='gate', symbol='ETH/USDT', market_type=MarketType.SPOT, side=Side.BUY, quantity=Decimal('2'), price=Decimal('10.5'), order_id='ord-1', fill_id='fill-1'))
         with self.database.connect() as connection:
             tick_count = connection.execute('SELECT COUNT(*) FROM ticks').fetchone()[0]
             fill_count = connection.execute('SELECT COUNT(*) FROM fills').fetchone()[0]
         assert tick_count == 1
         assert fill_count == 1
+        assert self.repository.list_fills(order_id='ord-1')[0]['fee'] == '0'
+
+    def test_save_workflow_state_and_list_active_workflows(self) -> None:
+        now = datetime(2026, 3, 16, tzinfo=timezone.utc)
+        self.repository.save_workflow_state(
+            workflow_id='wf-1',
+            workflow_type='open_position',
+            exchange='binance',
+            symbol='BTC/USDT',
+            status='running',
+            payload={'step': 'hedging', 'attempt': 1},
+            updated_at=now,
+        )
+        workflows = self.repository.list_workflow_states(statuses=('running',))
+        assert len(workflows) == 1
+        assert workflows[0]['workflow_id'] == 'wf-1'
+        assert workflows[0]['payload']['step'] == 'hedging'

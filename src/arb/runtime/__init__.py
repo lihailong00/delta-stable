@@ -16,6 +16,7 @@ from .protocols import (
     SubscribableWsClient,
 )
 from .realtime_scanner import RealtimeScanner
+from .recovery import RecoveryPlan, WorkflowRecovery
 from .snapshots import SnapshotService
 from .smoke import SmokeResult, SmokeRunner
 from .streaming import PrivateSessionService, PublicStreamService
@@ -33,6 +34,7 @@ __all__ = [
     "PrivateSessionService",
     "PrivateWsMessageBuilder",
     "PublicStreamService",
+    "RecoveryPlan",
     "RealtimeScanner",
     "ScanTarget",
     "SmokeRuntimeProtocol",
@@ -41,4 +43,5 @@ __all__ = [
     "SmokeResult",
     "SmokeRunner",
     "SubscribableWsClient",
+    "WorkflowRecovery",
 ]
