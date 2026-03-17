@@ -11,7 +11,7 @@ from arb.monitoring.funding_board import FundingBoard
 from arb.scanner.funding_scanner import FundingScanner
 
 
-def _snapshot(exchange: str, symbol: str, rate: str, liquidity: str) -> dict[str, object]:
+def _snapshot(exchange: str, symbol: str, rate: str, liquidity: str, *, funding_interval_hours: int = 8) -> dict[str, object]:
     ts = datetime(2026, 3, 17, tzinfo=timezone.utc).isoformat()
     return {
         "ticker": {
@@ -28,6 +28,7 @@ def _snapshot(exchange: str, symbol: str, rate: str, liquidity: str) -> dict[str
             "symbol": symbol,
             "rate": rate,
             "predicted_rate": rate,
+            "funding_interval_hours": funding_interval_hours,
             "next_funding_time": datetime(2026, 3, 17, 8, tzinfo=timezone.utc).isoformat(),
             "ts": ts,
         },
@@ -48,6 +49,7 @@ class TestFundingBoard:
 
         assert [row.symbol for row in rows] == ["BTC/USDT", "ETH/USDT"]
         assert rows[0].next_funding_time is not None
+        assert rows[0].funding_interval_hours == 8
 
     def test_build_rows_filters_low_liquidity(self) -> None:
         board = FundingBoard(

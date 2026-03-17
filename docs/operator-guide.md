@@ -217,9 +217,12 @@ PYTHONPATH=src uv run python examples/feishu_integration.py
 
 - `gross_rate`
 - `net_rate`
+- `funding_interval_hours`
 - `annualized_net_rate`
 - `spread_bps`
 - `liquidity_usd`
+
+如果是多交易所混合扫描，不要直接比较原始 funding 数值。先看 `funding_interval_hours`，再看系统按统一周期换算后的 `annualized_net_rate` 或策略阈值判断结果。
 
 ### 3. `workflow_state`
 

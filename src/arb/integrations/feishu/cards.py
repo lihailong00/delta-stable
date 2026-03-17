@@ -71,7 +71,7 @@ def build_funding_board_card(
     lines = [
         (
             f"{item.exchange} {item.symbol} "
-            f"net={item.net_rate} annualized={item.annualized_net_rate} "
+            f"net={item.net_rate} interval={item.funding_interval_hours}h annualized={item.annualized_net_rate} "
             f"spread_bps={item.spread_bps} liquidity={item.liquidity_usd}"
         )
         for item in items

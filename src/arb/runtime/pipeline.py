@@ -107,6 +107,7 @@ class OpportunityPipeline:
         prefix = "DRY-RUN " if dry_run else ""
         return (
             f"{prefix}{opportunity.exchange} {opportunity.symbol} "
-            f"net={opportunity.net_rate} annualized={opportunity.annualized_net_rate} "
+            f"net={opportunity.net_rate} interval={opportunity.funding_interval_hours}h "
+            f"annualized={opportunity.annualized_net_rate} "
             f"spread_bps={opportunity.spread_bps} liquidity_usd={opportunity.liquidity_usd}"
         )

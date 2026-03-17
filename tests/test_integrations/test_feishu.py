@@ -94,12 +94,13 @@ class TestFeishuCards:
         strategies = build_strategies_card([{'name': 'spot_perp', 'status': 'running'}])
         orders = build_orders_card([{'exchange': 'binance', 'symbol': 'BTC/USDT', 'order_id': 'ord-1', 'status': 'new', 'filled_quantity': '0'}])
         workflows = build_workflows_card([{'workflow_id': 'wf-1', 'exchange': 'binance', 'symbol': 'BTC/USDT', 'status': 'opening'}])
-        funding_board = build_funding_board_card([{'exchange': 'binance', 'symbol': 'BTC/USDT', 'net_rate': '0.0008', 'annualized_net_rate': '0.876', 'spread_bps': '2', 'liquidity_usd': '1000000'}])
+        funding_board = build_funding_board_card([{'exchange': 'binance', 'symbol': 'BTC/USDT', 'net_rate': '0.0008', 'funding_interval_hours': 4, 'annualized_net_rate': '0.876', 'spread_bps': '2', 'liquidity_usd': '1000000'}])
         action = build_action_card('spot_perp:BTC/USDT', 'close', command_id='cmd-1')
         assert 'BTC/USDT' in positions['elements'][0]['content']
         assert 'spot_perp' in strategies['elements'][0]['content']
         assert 'ord-1' in orders['elements'][0]['content']
         assert 'wf-1' in workflows['elements'][0]['content']
         assert 'annualized=0.876' in funding_board['elements'][0]['content']
+        assert 'interval=4h' in funding_board['elements'][0]['content']
         assert action['elements'][1]['actions'][0]['value']['action'] == 'close'
         assert action['elements'][1]['actions'][1]['value']['action'] == 'confirm'

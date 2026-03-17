@@ -232,3 +232,5 @@ PYTHONPATH=src uv run python examples/backtest_threshold_strategy.py
 - 最后再逐步引入 `rebalance_fee_rate` 和 `borrow_rate`
 
 如果你看到 `trade_count` 很高、`average_trade_return` 很低，通常说明阈值太激进，或者费用设得太乐观。
+
+如果你接的是多个交易所，先看 `funding_interval_hours`。`1h` funding 和 `8h` funding 的原始数字不能直接比较，应该先看系统归一化后的 `annualized_net_rate`，或者把阈值统一换算到同一个比较周期再判断。

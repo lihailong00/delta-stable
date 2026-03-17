@@ -19,10 +19,11 @@ from arb.scanner.funding_scanner import FundingScanner
 
 
 class _StaticRuntime:
-    def __init__(self, exchange: str, rate: str, liquidity_usd: str) -> None:
+    def __init__(self, exchange: str, rate: str, liquidity_usd: str, *, funding_interval_hours: int) -> None:
         self.exchange = exchange
         self.rate = rate
         self.liquidity_usd = liquidity_usd
+        self.funding_interval_hours = funding_interval_hours
 
     async def public_ping(self) -> bool:
         return True
@@ -44,6 +45,7 @@ class _StaticRuntime:
                 symbol=symbol,
                 rate=Decimal(self.rate),
                 predicted_rate=Decimal(self.rate),
+                funding_interval_hours=self.funding_interval_hours,
                 next_funding_time=datetime(2026, 1, 1, 8, tzinfo=timezone.utc),
                 ts=ts,
             ),
@@ -56,9 +58,9 @@ async def main() -> None:
     messages: list[str] = []
     manager = LiveExchangeManager(
         {
-            "binance": _StaticRuntime("binance", "0.0007", "350000"),
-            "okx": _StaticRuntime("okx", "0.0005", "240000"),
-            "bybit": _StaticRuntime("bybit", "0.0009", "500000"),
+            "binance": _StaticRuntime("binance", "0.0007", "350000", funding_interval_hours=8),
+            "okx": _StaticRuntime("okx", "0.0005", "240000", funding_interval_hours=4),
+            "bybit": _StaticRuntime("bybit", "0.0002", "500000", funding_interval_hours=1),
         }
     )
     scanner = FundingScanner(
@@ -82,6 +84,7 @@ async def main() -> None:
     print("ranked output")
     for line in result["output"]:
         print(line)
+    print("note: ranking is based on interval-normalized annualized net rate")
     print("metrics")
     print(metrics.snapshot())
 

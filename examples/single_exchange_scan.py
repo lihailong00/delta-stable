@@ -38,6 +38,7 @@ class _StaticRuntime:
                 symbol=symbol,
                 rate=Decimal("0.0008"),
                 predicted_rate=Decimal("0.0008"),
+                funding_interval_hours=4,
                 next_funding_time=datetime(2026, 1, 1, 8, tzinfo=timezone.utc),
                 ts=ts,
             ),
@@ -63,6 +64,7 @@ async def main() -> None:
     print("opportunities")
     for item in result["opportunities"]:
         print(item)
+    print("note: compare funding after normalizing by funding_interval_hours")
     print("output")
     for line in result["output"]:
         print(line)

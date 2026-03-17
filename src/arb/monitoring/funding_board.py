@@ -16,6 +16,7 @@ class FundingBoardRow(ArbFrozenModel):
     symbol: str
     gross_rate: str
     net_rate: str
+    funding_interval_hours: int
     annualized_net_rate: str
     spread_bps: str
     liquidity_usd: str
@@ -55,6 +56,7 @@ class FundingBoard:
                 symbol=item.symbol,
                 gross_rate=str(item.gross_rate),
                 net_rate=str(item.net_rate),
+                funding_interval_hours=item.funding_interval_hours,
                 annualized_net_rate=str(item.annualized_net_rate),
                 spread_bps=str(item.spread_bps),
                 liquidity_usd=str(item.liquidity_usd),

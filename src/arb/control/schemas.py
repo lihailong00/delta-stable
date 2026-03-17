@@ -47,6 +47,7 @@ class FundingBoardResponse(ArbFrozenModel):
     symbol: str
     gross_rate: str = "0"
     net_rate: str
+    funding_interval_hours: int = 8
     annualized_net_rate: str
     spread_bps: str
     liquidity_usd: str

@@ -18,6 +18,7 @@ Pydantic 建模约束和类型门禁见 [pydantic-modeling-guide.md](/home/longc
 - `open_fee_rate / close_fee_rate`：只在开仓和平仓时扣一次
 - `rebalance_fee_rate / rebalance_threshold_bps`：只有价格偏离到需要再平衡时才扣
 - `borrow_rate`：持仓期间每个 funding 周期都计入
+- `threshold_interval_hours`：阈值比较使用的统一周期。`1h/2h/4h/8h` funding 必须先归一化到同一周期再比较，不能直接拿原始值横向看。
 
 可以直接跑两个离线例子：
 
