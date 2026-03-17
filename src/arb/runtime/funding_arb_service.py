@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Any
 
 from arb.execution.router import RouteDecision
+from arb.models import MarketType, Position, PositionDirection
 from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
 from arb.runtime.pipeline import OpportunityPipeline
 from arb.runtime.realtime_scanner import RealtimeScanner
@@ -173,6 +174,16 @@ class FundingArbService:
             status="open" if result.status == "opened" else result.status,
             payload={"reason": result.reason, "attempts": result.attempts, "opened_at": now.isoformat()},
         )
+        if result.execution is not None and result.status == "opened":
+            self._persist_execution(result.execution)
+            self._persist_position_pair(
+                exchange=opportunity.exchange,
+                symbol=opportunity.symbol,
+                quantity=self.position_quantity,
+                spot_entry=Decimal(str(snapshot["ticker"]["ask"])),
+                perp_entry=Decimal(str(snapshot["ticker"]["bid"])),
+                closed=False,
+            )
         return result
 
     async def _close_position(
@@ -218,6 +229,16 @@ class FundingArbService:
             status="closed" if result.status in {"closed", "reduced"} else result.status,
             payload={"reason": result.reason, "retries": result.retries},
         )
+        if result.execution is not None and result.status in {"closed", "reduced"}:
+            self._persist_execution(result.execution)
+            self._persist_position_pair(
+                exchange=position.exchange,
+                symbol=position.symbol,
+                quantity=position.quantity,
+                spot_entry=Decimal(str(snapshot["ticker"]["bid"])),
+                perp_entry=Decimal(str(snapshot["ticker"]["ask"])),
+                closed=True,
+            )
         return result
 
     def _key(self, exchange: str, symbol: str) -> str:
@@ -231,3 +252,45 @@ class FundingArbService:
                 continue
             indexed[(str(funding["exchange"]), str(funding["symbol"]))] = snapshot
         return indexed
+
+    def _persist_execution(self, execution: Any) -> None:
+        for order in getattr(execution, "orders", []):
+            self.pipeline.record_order(order)
+        for order in getattr(execution, "adjustments", []):
+            self.pipeline.record_order(order)
+        for fill in getattr(execution, "fills", []):
+            self.pipeline.record_fill(fill)
+
+    def _persist_position_pair(
+        self,
+        *,
+        exchange: str,
+        symbol: str,
+        quantity: Decimal,
+        spot_entry: Decimal,
+        perp_entry: Decimal,
+        closed: bool,
+    ) -> None:
+        active_quantity = Decimal("0") if closed else quantity
+        self.pipeline.record_position(
+            Position(
+                exchange=exchange,
+                symbol=symbol,
+                market_type=MarketType.SPOT,
+                direction=PositionDirection.LONG,
+                quantity=active_quantity,
+                entry_price=spot_entry,
+                mark_price=spot_entry,
+            )
+        )
+        self.pipeline.record_position(
+            Position(
+                exchange=exchange,
+                symbol=symbol,
+                market_type=MarketType.PERPETUAL,
+                direction=PositionDirection.SHORT,
+                quantity=active_quantity,
+                entry_price=perp_entry,
+                mark_price=perp_entry,
+            )
+        )

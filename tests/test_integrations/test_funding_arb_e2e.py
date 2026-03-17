@@ -123,6 +123,8 @@ class _Repository:
         self.workflows: list[dict[str, object]] = []
         self.tickers: list[object] = []
         self.funding: list[object] = []
+        self.orders: list[object] = []
+        self.positions: list[object] = []
 
     def save_workflow_state(self, **payload) -> None:
         self.workflows.append(payload)
@@ -132,6 +134,15 @@ class _Repository:
 
     def save_funding(self, funding) -> None:
         self.funding.append(funding)
+
+    def save_order(self, order) -> None:
+        self.orders.append(order)
+
+    def save_fill(self, fill) -> None:
+        return None
+
+    def save_position(self, position) -> None:
+        self.positions.append(position)
 
 
 @pytest.mark.asyncio
@@ -170,3 +181,5 @@ async def test_funding_arb_e2e_signal_to_open_and_close() -> None:
     assert len(first["opened"]) == 1
     assert len(second["closed"]) == 1
     assert repository.workflows[-1]["status"] == "closed"
+    assert len(repository.orders) == 4
+    assert len(repository.positions) == 4

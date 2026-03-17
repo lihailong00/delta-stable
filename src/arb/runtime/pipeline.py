@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from arb.models import FundingRate, MarketType, Ticker
+from arb.models import Fill, FundingRate, MarketType, Order, Position, Ticker
 from arb.monitoring.metrics import MetricsRegistry
 from arb.scanner.funding_scanner import FundingOpportunity
 from arb.storage.repository import Repository
@@ -80,6 +80,18 @@ class OpportunityPipeline:
                 status=status,
                 payload=payload,
             )
+
+    def record_order(self, order: Order) -> None:
+        if self.repository is not None:
+            self.repository.save_order(order)
+
+    def record_fill(self, fill: Fill) -> None:
+        if self.repository is not None:
+            self.repository.save_fill(fill)
+
+    def record_position(self, position: Position) -> None:
+        if self.repository is not None:
+            self.repository.save_position(position)
 
     def format_opportunity(self, opportunity: FundingOpportunity, *, dry_run: bool = False) -> str:
         prefix = "DRY-RUN " if dry_run else ""

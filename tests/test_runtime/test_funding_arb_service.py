@@ -158,9 +158,21 @@ class _SequenceScanner:
 class _MemoryRepository:
     def __init__(self) -> None:
         self.workflow_states: list[dict[str, object]] = []
+        self.orders: list[Order] = []
+        self.fills: list[object] = []
+        self.positions: list[object] = []
 
     def save_workflow_state(self, **payload) -> None:
         self.workflow_states.append(payload)
+
+    def save_order(self, order) -> None:
+        self.orders.append(order)
+
+    def save_fill(self, fill) -> None:
+        self.fills.append(fill)
+
+    def save_position(self, position) -> None:
+        self.positions.append(position)
 
 
 @pytest.mark.asyncio
@@ -220,6 +232,8 @@ class TestFundingArbService:
         assert len(second["closed"]) == 1
         assert len(second["active"]) == 0
         assert [item["status"] for item in repository.workflow_states] == ["opening", "open", "closing", "closed"]
+        assert len(repository.orders) == 4
+        assert len(repository.positions) == 4
 
     async def test_service_skips_duplicate_symbol_and_opens_next_opportunity(self) -> None:
         spot_client = _Client(

@@ -8,8 +8,7 @@ from typing import Any
 
 from arb.execution.guards import GuardContext, PreTradeGuards
 from arb.execution.order_tracker import OrderTracker
-from arb.models import OrderStatus
-from arb.models import MarketType
+from arb.models import Fill, MarketType, OrderStatus
 
 
 @dataclass(slots=True, frozen=True)
@@ -28,6 +27,7 @@ class ExecutionLeg:
 class ExecutionResult:
     status: str
     orders: list[Any] = field(default_factory=list)
+    fills: list[Fill] = field(default_factory=list)
     adjustments: list[Any] = field(default_factory=list)
     rollback_performed: bool = False
     reason: str = ""
@@ -74,6 +74,7 @@ class PairExecutor:
             market_type=second_leg.market_type,
         )
         result.orders = [first_tracked.final_order, second_tracked.final_order]
+        result.fills = [*first_tracked.fills, *second_tracked.fills]
 
         if self._tracking_failed(first_tracked, second_tracked):
             result.status = "failed"
