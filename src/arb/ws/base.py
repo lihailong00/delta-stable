@@ -4,21 +4,21 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any
 
+from pydantic import Field
+
+from arb.schemas.base import ArbFrozenModel, SerializableValue
 
 def utc_now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-@dataclass(slots=True, frozen=True)
-class WsEvent:
+class WsEvent(ArbFrozenModel):
     exchange: str
     channel: str
-    payload: Mapping[str, Any]
-    received_at: datetime = field(default_factory=utc_now)
+    payload: dict[str, SerializableValue]
+    received_at: datetime = Field(default_factory=utc_now)
 
 
 class BaseWebSocketClient(ABC):
@@ -39,17 +39,17 @@ class BaseWebSocketClient(ABC):
         *,
         symbol: str | None = None,
         market: str | None = None,
-    ) -> Mapping[str, Any]:
+    ) -> Mapping[str, SerializableValue]:
         """Return the subscription payload for a WS channel."""
 
     @abstractmethod
-    def parse_message(self, message: Mapping[str, Any]) -> list[WsEvent]:
+    def parse_message(self, message: Mapping[str, SerializableValue]) -> list[WsEvent]:
         """Convert a raw WS frame into normalized events."""
 
-    def build_ping_message(self) -> Mapping[str, Any]:
+    def build_ping_message(self) -> Mapping[str, SerializableValue]:
         return {"op": "ping"}
 
-    def is_pong_message(self, message: Mapping[str, Any]) -> bool:
+    def is_pong_message(self, message: Mapping[str, SerializableValue]) -> bool:
         return message.get("op") == "pong"
 
     def should_ping(self, now: datetime | None = None) -> bool:
@@ -57,7 +57,7 @@ class BaseWebSocketClient(ABC):
         reference = self.last_ping_at or self.last_pong_at
         return current - reference >= timedelta(seconds=self.heartbeat_interval)
 
-    def mark_ping(self, now: datetime | None = None) -> Mapping[str, Any]:
+    def mark_ping(self, now: datetime | None = None) -> Mapping[str, SerializableValue]:
         self.last_ping_at = now or utc_now()
         return self.build_ping_message()
 
@@ -71,7 +71,7 @@ class BaseWebSocketClient(ABC):
         timeout = timedelta(seconds=self.heartbeat_interval * 2)
         return current - self.last_pong_at > timeout
 
-    def handle_message(self, message: Mapping[str, Any]) -> list[WsEvent]:
+    def handle_message(self, message: Mapping[str, SerializableValue]) -> list[WsEvent]:
         self.last_message_at = utc_now()
         if self.is_pong_message(message):
             self.mark_pong(self.last_message_at)
