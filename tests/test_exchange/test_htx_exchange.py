@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 pytestmark = pytest.mark.asyncio
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
 from arb.exchange.htx import HtxExchange
-from arb.models import MarketType, OrderStatus
+from arb.models import MarketType, OrderStatus, PositionDirection, Side
 
 class TestHtxExchange:
 
@@ -49,3 +49,20 @@ class TestHtxExchange:
         assert request['body']['offset'] == 'close'
         assert order.status == OrderStatus.NEW
         assert order.order_id == '312269865356374016'
+
+    async def test_fetch_order_positions_and_fills_parse_swap_payloads(self) -> None:
+        transport = AsyncMock(side_effect=[
+            {'status': 'ok', 'data': [{'contract_code': 'BTC-USDT', 'direction': 'sell', 'offset': 'close', 'volume': 1, 'price': '101', 'status': 'partially_filled', 'order_id_str': '1', 'trade_volume': '0.4', 'trade_avg_price': '101'}]},
+            {'status': 'ok', 'data': [{'contract_code': 'BTC-USDT', 'direction': 'sell', 'volume': '1', 'cost_open': '100', 'last_price': '99', 'profit_unreal': '1', 'liquidation_price': '120', 'lever_rate': '3'}]},
+            {'status': 'ok', 'data': {'trades': [{'direction': 'sell', 'trade_volume': '0.4', 'trade_price': '101', 'order_id': '1', 'trade_id': 't1', 'trade_fee': '0.02', 'create_date': '1710000000000'}]}},
+        ])
+        client = HtxExchange('key', 'secret', transport=transport)
+        order = await client.fetch_order('1', 'BTC/USDT', MarketType.PERPETUAL)
+        positions = await client.fetch_positions(symbol='BTC/USDT')
+        fills = await client.fetch_fills('1', 'BTC/USDT', MarketType.PERPETUAL)
+        assert transport.await_args_list[0].args[0]['path'] == '/linear-swap-api/v1/swap_order_info'
+        assert transport.await_args_list[1].args[0]['path'] == '/linear-swap-api/v1/swap_position_info'
+        assert transport.await_args_list[2].args[0]['path'] == '/linear-swap-api/v1/swap_order_detail'
+        assert order.status == OrderStatus.PARTIALLY_FILLED
+        assert positions[0].direction == PositionDirection.SHORT
+        assert fills[0].side == Side.SELL

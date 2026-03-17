@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from arb.exchange.base import BaseExchangeClient
-from arb.models import FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Side, Ticker
+from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Position, PositionDirection, Side, Ticker
 from arb.utils.symbols import normalize_symbol, split_symbol
 
 RestTransport = Callable[[dict[str, Any]], Awaitable[Any]]
@@ -312,6 +312,121 @@ class HtxExchange(BaseExchangeClient):
             order_id=order_id,
         )
 
+    async def fetch_order(
+        self,
+        order_id: str,
+        symbol: str,
+        market_type: MarketType,
+    ) -> Order:
+        if market_type is MarketType.SPOT:
+            payload = await self._request(
+                "GET",
+                f"/v1/order/orders/{order_id}",
+                signed=True,
+                base_url=self.spot_base_url,
+                host="api.huobi.pro",
+            )
+            data = payload["data"]
+        else:
+            payload = await self._request(
+                "POST",
+                "/linear-swap-api/v1/swap_order_info",
+                body={
+                    "contract_code": self.to_exchange_symbol(symbol, market_type),
+                    "order_id": order_id,
+                },
+                signed=True,
+                base_url=self.swap_base_url,
+                host="api.hbdm.com",
+            )
+            data = payload["data"][0]
+        return self._parse_order(data, symbol, market_type)
+
+    async def fetch_open_orders(
+        self,
+        symbol: str | None,
+        market_type: MarketType,
+    ) -> list[Order]:
+        if market_type is MarketType.SPOT:
+            account_id = await self._ensure_spot_account_id()
+            params: dict[str, Any] = {"account-id": account_id}
+            if symbol is not None:
+                params["symbol"] = self.to_exchange_symbol(symbol, market_type)
+            payload = await self._request(
+                "GET",
+                "/v1/order/openOrders",
+                params=params,
+                signed=True,
+                base_url=self.spot_base_url,
+                host="api.huobi.pro",
+            )
+            data = payload["data"]
+        else:
+            body: dict[str, Any] = {}
+            if symbol is not None:
+                body["contract_code"] = self.to_exchange_symbol(symbol, market_type)
+            payload = await self._request(
+                "POST",
+                "/linear-swap-api/v1/swap_openorders",
+                body=body,
+                signed=True,
+                base_url=self.swap_base_url,
+                host="api.hbdm.com",
+            )
+            data = payload["data"].get("orders", [])
+        return [self._parse_order(item, symbol or "", market_type) for item in data]
+
+    async def fetch_positions(
+        self,
+        market_type: MarketType = MarketType.PERPETUAL,
+        *,
+        symbol: str | None = None,
+    ) -> list[Position]:
+        if market_type is MarketType.SPOT:
+            return []
+        body: dict[str, Any] = {}
+        if symbol is not None:
+            body["contract_code"] = self.to_exchange_symbol(symbol, market_type)
+        payload = await self._request(
+            "POST",
+            "/linear-swap-api/v1/swap_position_info",
+            body=body,
+            signed=True,
+            base_url=self.swap_base_url,
+            host="api.hbdm.com",
+        )
+        return [position for item in payload["data"] if (position := self._parse_position(item)) is not None]
+
+    async def fetch_fills(
+        self,
+        order_id: str,
+        symbol: str,
+        market_type: MarketType,
+    ) -> list[Fill]:
+        if market_type is MarketType.SPOT:
+            payload = await self._request(
+                "GET",
+                f"/v1/order/orders/{order_id}/matchresults",
+                signed=True,
+                base_url=self.spot_base_url,
+                host="api.huobi.pro",
+            )
+            data = payload["data"]
+        else:
+            payload = await self._request(
+                "POST",
+                "/linear-swap-api/v1/swap_order_detail",
+                body={
+                    "contract_code": self.to_exchange_symbol(symbol, market_type),
+                    "order_id": order_id,
+                },
+                signed=True,
+                base_url=self.swap_base_url,
+                host="api.hbdm.com",
+            )
+            data = payload["data"].get("trades", [])
+        return [self._parse_fill(item, symbol, market_type) for item in data]
+
     async def _ensure_spot_account_id(self) -> str:
         if self._spot_account_id is not None:
             return self._spot_account_id
@@ -375,3 +490,88 @@ class HtxExchange(BaseExchangeClient):
         if status != "ok":
             raise RuntimeError(f"HTX request failed: {payload.get('err-code', payload.get('err-msg', status))}")
         return payload
+
+    def _parse_order(self, payload: Mapping[str, Any], symbol: str, market_type: MarketType) -> Order:
+        status_key = str(payload.get("state", payload.get("status", "submitted"))).lower()
+        status = {
+            "submitted": OrderStatus.NEW,
+            "created": OrderStatus.NEW,
+            "partial-filled": OrderStatus.PARTIALLY_FILLED,
+            "partially_filled": OrderStatus.PARTIALLY_FILLED,
+            "filled": OrderStatus.FILLED,
+            "canceled": OrderStatus.CANCELED,
+            "cancelled": OrderStatus.CANCELED,
+            "rejected": OrderStatus.REJECTED,
+        }.get(status_key, OrderStatus.NEW)
+        if market_type is MarketType.SPOT:
+            side_value = str(payload.get("type", "buy-limit")).split("-", 1)[0]
+            quantity = Decimal(str(payload.get("amount", "0")))
+            filled_quantity = Decimal(str(payload.get("field-amount", payload.get("filled-amount", "0"))))
+            average_price = Decimal(str(payload["field-cash-amount"])) / filled_quantity if filled_quantity and payload.get("field-cash-amount") not in (None, "") else None
+            parsed_symbol = self.from_exchange_symbol(str(payload.get("symbol", self.to_exchange_symbol(symbol, market_type))), market_type)
+        else:
+            side_value = str(payload.get("direction", "buy"))
+            quantity = Decimal(str(payload.get("volume", "0")))
+            filled_quantity = Decimal(str(payload.get("trade_volume", "0")))
+            average_price = Decimal(str(payload["trade_avg_price"])) if payload.get("trade_avg_price") not in (None, "", "0") else None
+            parsed_symbol = self.from_exchange_symbol(str(payload.get("contract_code", self.to_exchange_symbol(symbol, market_type))), market_type)
+        return Order(
+            exchange=self.name,
+            symbol=parsed_symbol,
+            market_type=market_type,
+            side=Side(side_value.lower()),
+            quantity=quantity,
+            price=Decimal(str(payload["price"])) if payload.get("price") not in (None, "", "0") else None,
+            status=status,
+            order_id=str(payload.get("id", payload.get("order_id_str", payload.get("order_id", "")))),
+            client_order_id=str(payload["client-order-id"]) if payload.get("client-order-id") else None,
+            filled_quantity=filled_quantity,
+            average_price=average_price,
+            reduce_only=str(payload.get("offset", "")).lower() == "close",
+            raw_status=status_key,
+        )
+
+    def _parse_position(self, payload: Mapping[str, Any]) -> Position | None:
+        quantity = Decimal(str(payload.get("volume", payload.get("available", "0"))))
+        if quantity == 0:
+            return None
+        direction = PositionDirection.LONG if str(payload.get("direction", "buy")).lower() in {"buy", "long"} else PositionDirection.SHORT
+        return Position(
+            exchange=self.name,
+            symbol=self.from_exchange_symbol(str(payload.get("contract_code", "")), MarketType.PERPETUAL),
+            market_type=MarketType.PERPETUAL,
+            direction=direction,
+            quantity=quantity,
+            entry_price=Decimal(str(payload.get("cost_open", payload.get("open_price_avg", "0")))),
+            mark_price=Decimal(str(payload.get("last_price", payload.get("mark_price", "0")))),
+            unrealized_pnl=Decimal(str(payload.get("profit_unreal", "0"))),
+            liquidation_price=Decimal(str(payload["liquidation_price"])) if payload.get("liquidation_price") not in (None, "", "0") else None,
+            leverage=Decimal(str(payload["lever_rate"])) if payload.get("lever_rate") not in (None, "", "0") else None,
+            margin_mode=str(payload["margin_mode"]) if payload.get("margin_mode") else None,
+        )
+
+    def _parse_fill(self, payload: Mapping[str, Any], symbol: str, market_type: MarketType) -> Fill:
+        ts_value = payload.get("created-at", payload.get("create_date", int(datetime.now(tz=timezone.utc).timestamp() * 1000)))
+        if isinstance(ts_value, str) and not ts_value.isdigit():
+            timestamp = datetime.fromisoformat(ts_value)
+        else:
+            ts_int = int(ts_value)
+            timestamp = datetime.fromtimestamp(ts_int / (1000 if ts_int > 10**10 else 1), tz=timezone.utc)
+        price = payload.get("price", payload.get("trade_price", "0"))
+        quantity = payload.get("filled-amount", payload.get("trade_volume", payload.get("filled_amount", "0")))
+        fee = payload.get("filled-fees", payload.get("trade_fee", "0"))
+        fee_asset = payload.get("fee-currency", payload.get("fee_asset"))
+        return Fill(
+            exchange=self.name,
+            symbol=symbol,
+            market_type=market_type,
+            side=Side(str(payload.get("order-side", payload.get("direction", "buy"))).lower()),
+            quantity=Decimal(str(quantity)),
+            price=Decimal(str(price)),
+            order_id=str(payload.get("order-id", payload.get("order_id", ""))),
+            fill_id=str(payload.get("match-id", payload.get("trade_id", ""))),
+            fee=Decimal(str(fee)),
+            fee_asset=str(fee_asset) if fee_asset else None,
+            liquidity=None,
+            ts=timestamp,
+        )

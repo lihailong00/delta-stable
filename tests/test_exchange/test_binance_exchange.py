@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 pytestmark = pytest.mark.asyncio
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
 from arb.exchange.binance import BinanceExchange
-from arb.models import MarketType, OrderStatus
+from arb.models import MarketType, OrderStatus, PositionDirection, Side
 
 class TestBinanceExchange:
 
@@ -48,3 +48,22 @@ class TestBinanceExchange:
         assert 'signature' in request['params']
         assert order.status == OrderStatus.NEW
         assert order.order_id == '12345'
+
+    async def test_fetch_order_positions_and_fills_use_private_endpoints(self) -> None:
+        transport = AsyncMock(side_effect=[
+            {'symbol': 'BTCUSDT', 'side': 'SELL', 'origQty': '1', 'executedQty': '0.4', 'price': '101', 'status': 'PARTIALLY_FILLED', 'orderId': 12345, 'avgPrice': '101', 'reduceOnly': True},
+            [{'symbol': 'BTCUSDT', 'positionAmt': '-1', 'entryPrice': '100', 'markPrice': '99', 'unRealizedProfit': '1', 'liquidationPrice': '120', 'leverage': '3', 'marginType': 'cross'}],
+            [{'symbol': 'BTCUSDT', 'orderId': 12345, 'id': 9, 'price': '101', 'qty': '0.4', 'commission': '0.02', 'commissionAsset': 'USDT', 'isBuyer': False, 'isMaker': True, 'time': 1710000000000}],
+        ])
+        client = BinanceExchange('key', 'secret', transport=transport)
+        order = await client.fetch_order('12345', 'BTC/USDT', MarketType.PERPETUAL)
+        positions = await client.fetch_positions(symbol='BTC/USDT')
+        fills = await client.fetch_fills('12345', 'BTC/USDT', MarketType.PERPETUAL)
+        assert transport.await_args_list[0].args[0]['path'] == '/fapi/v1/order'
+        assert transport.await_args_list[1].args[0]['path'] == '/fapi/v2/positionRisk'
+        assert transport.await_args_list[2].args[0]['path'] == '/fapi/v1/userTrades'
+        assert order.status == OrderStatus.PARTIALLY_FILLED
+        assert order.filled_quantity == Decimal('0.4')
+        assert positions[0].direction == PositionDirection.SHORT
+        assert fills[0].side == Side.SELL
+        assert fills[0].fee_asset == 'USDT'

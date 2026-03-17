@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from arb.exchange.base import BaseExchangeClient
-from arb.models import FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Side, Ticker
+from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, OrderBookLevel, OrderStatus, Position, PositionDirection, Side, Ticker
 from arb.utils.symbols import exchange_symbol, normalize_symbol
 
 RestTransport = Callable[[dict[str, Any]], Awaitable[Any]]
@@ -200,6 +200,82 @@ class BinanceExchange(BaseExchangeClient):
         )
         return self._parse_order(payload, market_type)
 
+    async def fetch_order(
+        self,
+        order_id: str,
+        symbol: str,
+        market_type: MarketType,
+    ) -> Order:
+        path = "/api/v3/order" if market_type is MarketType.SPOT else "/fapi/v1/order"
+        payload = await self._request(
+            "GET",
+            path,
+            market_type=market_type,
+            params={
+                "symbol": self.to_exchange_symbol(symbol, market_type),
+                "orderId": order_id,
+            },
+            signed=True,
+        )
+        return self._parse_order(payload, market_type)
+
+    async def fetch_open_orders(
+        self,
+        symbol: str | None,
+        market_type: MarketType,
+    ) -> list[Order]:
+        path = "/api/v3/openOrders" if market_type is MarketType.SPOT else "/fapi/v1/openOrders"
+        params: dict[str, Any] = {}
+        if symbol is not None:
+            params["symbol"] = self.to_exchange_symbol(symbol, market_type)
+        payload = await self._request(
+            "GET",
+            path,
+            market_type=market_type,
+            params=params,
+            signed=True,
+        )
+        return [self._parse_order(item, market_type) for item in payload]
+
+    async def fetch_positions(
+        self,
+        market_type: MarketType = MarketType.PERPETUAL,
+        *,
+        symbol: str | None = None,
+    ) -> list[Position]:
+        if market_type is MarketType.SPOT:
+            return []
+        params: dict[str, Any] = {}
+        if symbol is not None:
+            params["symbol"] = self.to_exchange_symbol(symbol, market_type)
+        payload = await self._request(
+            "GET",
+            "/fapi/v2/positionRisk",
+            market_type=market_type,
+            params=params,
+            signed=True,
+        )
+        return [position for item in payload if (position := self._parse_position(item)) is not None]
+
+    async def fetch_fills(
+        self,
+        order_id: str,
+        symbol: str,
+        market_type: MarketType,
+    ) -> list[Fill]:
+        path = "/api/v3/myTrades" if market_type is MarketType.SPOT else "/fapi/v1/userTrades"
+        payload = await self._request(
+            "GET",
+            path,
+            market_type=market_type,
+            params={
+                "symbol": self.to_exchange_symbol(symbol, market_type),
+                "orderId": order_id,
+            },
+            signed=True,
+        )
+        return [self._parse_fill(item, symbol, market_type) for item in payload]
+
     async def _request(
         self,
         method: str,
@@ -278,7 +354,7 @@ class BinanceExchange(BaseExchangeClient):
             "FILLED": OrderStatus.FILLED,
             "CANCELED": OrderStatus.CANCELED,
             "REJECTED": OrderStatus.REJECTED,
-            "EXPIRED": OrderStatus.CANCELED,
+            "EXPIRED": OrderStatus.EXPIRED,
         }
         return Order(
             exchange=self.name,
@@ -289,10 +365,70 @@ class BinanceExchange(BaseExchangeClient):
             price=Decimal(str(payload["price"])) if payload.get("price") not in (None, "") else None,
             status=status_map[str(payload.get("status", "NEW")).upper()],
             order_id=str(payload.get("orderId", payload.get("order_id", ""))),
+            client_order_id=(
+                str(payload["clientOrderId"])
+                if payload.get("clientOrderId") not in (None, "")
+                else None
+            ),
             filled_quantity=Decimal(str(payload.get("executedQty", payload.get("executed_quantity", "0")))),
             average_price=(
                 Decimal(str(payload["avgPrice"]))
                 if payload.get("avgPrice") not in (None, "", "0")
                 else None
             ),
+            reduce_only=bool(payload.get("reduceOnly", False)),
+            raw_status=str(payload.get("status", "NEW")),
+        )
+
+    def _parse_position(self, payload: Mapping[str, Any]) -> Position | None:
+        raw_quantity = Decimal(str(payload.get("positionAmt", payload.get("position_amount", "0"))))
+        if raw_quantity == 0:
+            return None
+        direction = (
+            PositionDirection.LONG
+            if raw_quantity > 0 or str(payload.get("positionSide", "")).upper() == "LONG"
+            else PositionDirection.SHORT
+        )
+        symbol = self.from_exchange_symbol(str(payload["symbol"]), MarketType.PERPETUAL)
+        return Position(
+            exchange=self.name,
+            symbol=symbol,
+            market_type=MarketType.PERPETUAL,
+            direction=direction,
+            quantity=abs(raw_quantity),
+            entry_price=Decimal(str(payload.get("entryPrice", "0"))),
+            mark_price=Decimal(str(payload.get("markPrice", "0"))),
+            unrealized_pnl=Decimal(str(payload.get("unRealizedProfit", payload.get("unrealizedProfit", "0")))),
+            liquidation_price=(
+                Decimal(str(payload["liquidationPrice"]))
+                if payload.get("liquidationPrice") not in (None, "", "0")
+                else None
+            ),
+            leverage=(
+                Decimal(str(payload["leverage"]))
+                if payload.get("leverage") not in (None, "")
+                else None
+            ),
+            margin_mode=str(payload["marginType"]) if payload.get("marginType") else None,
+        )
+
+    def _parse_fill(self, payload: Mapping[str, Any], symbol: str, market_type: MarketType) -> Fill:
+        if payload.get("side") is not None:
+            side = Side(str(payload["side"]).lower())
+        else:
+            side = Side.BUY if bool(payload.get("isBuyer", True)) else Side.SELL
+        liquidity = "maker" if bool(payload.get("isMaker", False)) else "taker"
+        return Fill(
+            exchange=self.name,
+            symbol=symbol,
+            market_type=market_type,
+            side=side,
+            quantity=Decimal(str(payload.get("qty", payload.get("executedQty", "0")))),
+            price=Decimal(str(payload.get("price", payload.get("avgPrice", "0")))),
+            order_id=str(payload.get("orderId", "")),
+            fill_id=str(payload.get("id", payload.get("tradeId", ""))),
+            fee=Decimal(str(payload.get("commission", payload.get("commissionAmount", "0")))),
+            fee_asset=str(payload["commissionAsset"]) if payload.get("commissionAsset") else None,
+            liquidity=liquidity,
+            ts=_utc_from_millis(payload.get("time", payload.get("tradeTime", int(time.time() * 1000)))),
         )
