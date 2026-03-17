@@ -5,11 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
+from arb.models import Side
+
 
 @dataclass(slots=True, frozen=True)
 class RouteDecision:
     mode: str
     exchange: str
+    urgent: bool = False
 
 
 class ExecutionRouter:
@@ -61,4 +64,34 @@ class ExecutionRouter:
                 fallback_exchange=fallback_exchange,
                 exchange_available=exchange_available,
             ),
+            urgent=urgent,
+        )
+
+    def quote_price(
+        self,
+        *,
+        reference_price: Decimal,
+        side: str | Side,
+        mode: str,
+        max_slippage_bps: Decimal = Decimal("0"),
+    ) -> Decimal:
+        if mode == "maker" or max_slippage_bps <= 0:
+            return reference_price
+        multiplier = Decimal("1") + (max_slippage_bps / Decimal("10000"))
+        normalized_side = Side(str(side).lower())
+        if normalized_side is Side.BUY:
+            return reference_price * multiplier
+        return reference_price / multiplier
+
+    def should_escalate_to_taker(
+        self,
+        *,
+        current_mode: str,
+        elapsed_seconds: float,
+        max_naked_seconds: float,
+    ) -> bool:
+        return (
+            current_mode != "taker"
+            and max_naked_seconds > 0
+            and elapsed_seconds >= max_naked_seconds
         )

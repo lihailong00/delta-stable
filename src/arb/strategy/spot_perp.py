@@ -23,6 +23,13 @@ class SpotPerpInputs:
     perp_quantity: Decimal = Decimal("0")
 
 
+@dataclass(slots=True, frozen=True)
+class EntryQuoteCheck:
+    accepted: bool
+    reason: str
+    basis_bps: Decimal
+
+
 class SpotPerpStrategy:
     """Decision logic for same-exchange spot/perp funding capture."""
 
@@ -56,6 +63,14 @@ class SpotPerpStrategy:
             return Decimal("0")
         return perp_quantity / spot_quantity
 
+    def check_entry_quote(self, inputs: SpotPerpInputs) -> EntryQuoteCheck:
+        basis = self.basis_bps(inputs.spot_price, inputs.perp_price)
+        if inputs.funding_rate < self.min_open_funding_rate:
+            return EntryQuoteCheck(False, "funding_below_threshold", basis)
+        if abs(basis) > self.max_basis_bps:
+            return EntryQuoteCheck(False, "basis_out_of_range", basis)
+        return EntryQuoteCheck(True, "quote_accepted", basis)
+
     def evaluate(
         self,
         inputs: SpotPerpInputs,
@@ -65,21 +80,22 @@ class SpotPerpStrategy:
     ) -> StrategyDecision:
         current_state = state or StrategyState()
         current_time = now or _utc_now()
-        basis = self.basis_bps(inputs.spot_price, inputs.perp_price)
+        quote_check = self.check_entry_quote(inputs)
+        basis = quote_check.basis_bps
         hedge_ratio = self.target_hedge_ratio(
             spot_quantity=inputs.spot_quantity or Decimal("1"),
             perp_quantity=inputs.perp_quantity or inputs.spot_quantity or Decimal("1"),
         )
 
         if not current_state.is_open:
-            if inputs.funding_rate >= self.min_open_funding_rate and abs(basis) <= self.max_basis_bps:
+            if quote_check.accepted:
                 return StrategyDecision(
                     StrategyAction.OPEN,
-                    reason="funding_above_threshold",
+                    reason=quote_check.reason,
                     target_hedge_ratio=Decimal("1"),
                     metadata={"symbol": inputs.symbol},
                 )
-            return StrategyDecision(StrategyAction.HOLD, reason="no_open_signal", metadata={"symbol": inputs.symbol})
+            return StrategyDecision(StrategyAction.HOLD, reason=quote_check.reason, metadata={"symbol": inputs.symbol})
 
         if inputs.funding_rate <= self.close_funding_rate:
             return StrategyDecision(StrategyAction.CLOSE, reason="funding_reversed", metadata={"symbol": inputs.symbol})

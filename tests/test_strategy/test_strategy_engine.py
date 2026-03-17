@@ -14,6 +14,13 @@ class TestSpotPerpStrategy:
         strategy = SpotPerpStrategy(min_open_funding_rate=Decimal('0.0005'))
         decision = strategy.evaluate(SpotPerpInputs(symbol='BTC/USDT', funding_rate=Decimal('0.0008'), spot_price=Decimal('100'), perp_price=Decimal('100.1')))
         assert decision.action == StrategyAction.OPEN
+        assert decision.reason == 'quote_accepted'
+
+    def test_entry_quote_rejects_wide_basis(self) -> None:
+        strategy = SpotPerpStrategy(min_open_funding_rate=Decimal('0.0005'), max_basis_bps=Decimal('10'))
+        quote = strategy.check_entry_quote(SpotPerpInputs(symbol='BTC/USDT', funding_rate=Decimal('0.0008'), spot_price=Decimal('100'), perp_price=Decimal('100.5')))
+        assert not quote.accepted
+        assert quote.reason == 'basis_out_of_range'
 
     def test_hedge_ratio_and_rebalance_trigger(self) -> None:
         strategy = SpotPerpStrategy(rebalance_threshold=Decimal('0.02'))
