@@ -10,9 +10,10 @@ from arb.backtest.simulator import FundingBacktester
 class TestBacktest:
 
     def test_loader_parses_historical_rows(self) -> None:
-        points = load_points([{'ts': '2026-03-16T00:00:00+00:00', 'price': '100', 'funding_rate': '0.0005', 'liquidity_usd': '100000'}])
+        points = load_points([{'ts': '2026-03-16T00:00:00+00:00', 'price': '100', 'funding_rate': '0.0005', 'funding_interval_hours': '4', 'liquidity_usd': '100000'}])
         assert points[0].price == Decimal('100')
         assert points[0].funding_rate == Decimal('0.0005')
+        assert points[0].funding_interval_hours == 4
 
     def test_backtest_replays_strategy(self) -> None:
         points = load_points([{'ts': '2026-03-16T00:00:00+00:00', 'price': '100', 'funding_rate': '0.001', 'liquidity_usd': '100000'}, {'ts': '2026-03-16T08:00:00+00:00', 'price': '101', 'funding_rate': '-0.0002', 'liquidity_usd': '80000'}])
@@ -82,6 +83,23 @@ class TestBacktest:
 
         assert result.total_return == Decimal('0.9')
         assert result.equity_curve == [Decimal('0.6'), Decimal('0.9'), Decimal('0.9')]
+
+    def test_threshold_strategy_normalizes_funding_intervals_before_comparing(self) -> None:
+        points = load_points([
+            {'ts': '2026-03-16T00:00:00+00:00', 'price': '100', 'funding_rate': '0.00009', 'funding_interval_hours': '1', 'liquidity_usd': '100000'},
+            {'ts': '2026-03-16T01:00:00+00:00', 'price': '100', 'funding_rate': '0.00012', 'funding_interval_hours': '1', 'liquidity_usd': '100000'},
+            {'ts': '2026-03-16T02:00:00+00:00', 'price': '100', 'funding_rate': '0.00008', 'funding_interval_hours': '1', 'liquidity_usd': '100000'},
+        ])
+
+        result = FundingBacktester(
+            open_threshold=Decimal('0.0001'),
+            close_threshold=Decimal('0.00009'),
+            threshold_interval_hours=1,
+        ).run(points, position_notional=Decimal('1000'))
+
+        assert result.trade_count == 1
+        assert result.holding_periods == 1
+        assert result.equity_curve == [Decimal('0'), Decimal('0.12'), Decimal('0.12')]
 
     def test_eventized_cost_model_splits_open_close_and_borrow_costs(self) -> None:
         points = load_points([

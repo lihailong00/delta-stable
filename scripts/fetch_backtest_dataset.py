@@ -32,6 +32,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start", required=True, help="Start month in YYYY-MM")
     parser.add_argument("--end", required=True, help="End month in YYYY-MM")
     parser.add_argument(
+        "--interval-hours",
+        type=int,
+        default=8,
+        help="Funding and kline interval in hours, for example 1, 2, 4, 8",
+    )
+    parser.add_argument(
         "--output-dir",
         default="data/backtest/binance",
         help="Directory for per-symbol output CSV files",
@@ -53,11 +59,23 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     fetcher = BinancePublicDataFetcher()
-    results = fetcher.fetch_many(args.symbol, args.start, args.end, strict=args.strict)
+    results = fetcher.fetch_many(
+        args.symbol,
+        args.start,
+        args.end,
+        interval_hours=args.interval_hours,
+        strict=args.strict,
+    )
 
     combined_rows: list[dict[str, str]] = []
     for result in results:
-        output_path = default_output_path(args.output_dir, result.symbol, args.start, args.end)
+        output_path = default_output_path(
+            args.output_dir,
+            result.symbol,
+            args.start,
+            args.end,
+            interval_hours=args.interval_hours,
+        )
         write_dataset_csv(output_path, result.rows)
         combined_rows.extend(result.rows)
         print(

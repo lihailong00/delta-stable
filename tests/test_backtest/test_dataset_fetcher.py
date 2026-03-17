@@ -14,6 +14,7 @@ from arb.backtest.dataset_fetcher import (
     BinancePublicDataFetcher,
     DatasetNotFoundError,
     default_output_path,
+    interval_to_label,
     iter_months,
     merge_month_rows,
     write_dataset_csv,
@@ -61,12 +62,13 @@ class TestDatasetFetcher:
     def test_iter_months_is_inclusive(self) -> None:
         assert iter_months('2026-01', '2026-03') == ['2026-01', '2026-02', '2026-03']
 
-    def test_merge_month_rows_aligns_by_8h_bucket(self) -> None:
+    def test_merge_month_rows_aligns_by_configured_interval_bucket(self) -> None:
         merged = merge_month_rows(
             'BTCUSDT',
             '2026-02',
-            [{'calc_time': '1769904000001', 'last_funding_rate': '-0.00003267'}],
+            [{'calc_time': '1769904000001', 'funding_interval_hours': '4', 'last_funding_rate': '-0.00003267'}],
             [{'open_time': '1769904000000', 'close': '78320.80', 'quote_volume': '2981356447.19'}],
+            interval_hours=4,
         )
         assert merged == [
             {
@@ -75,6 +77,7 @@ class TestDatasetFetcher:
                 'ts': '2026-02-01T00:00:00+00:00',
                 'price': '78320.80',
                 'funding_rate': '-0.00003267',
+                'funding_interval_hours': '4',
                 'liquidity_usd': '2981356447.19',
                 'source_month': '2026-02',
             }
@@ -106,18 +109,19 @@ class TestDatasetFetcher:
                     'BTCUSDT-fundingRate-2026-01.csv',
                     funding_rows,
                 ),
-                'https://data.binance.vision/data/futures/um/monthly/klines/BTCUSDT/8h/BTCUSDT-8h-2026-01.zip': _zip_csv(
-                    'BTCUSDT-8h-2026-01.csv',
+                'https://data.binance.vision/data/futures/um/monthly/klines/BTCUSDT/4h/BTCUSDT-4h-2026-01.zip': _zip_csv(
+                    'BTCUSDT-4h-2026-01.csv',
                     kline_rows,
                 ),
             }
         )
 
         fetcher = BinancePublicDataFetcher(opener=opener)
-        result = fetcher.fetch_symbol('BTCUSDT', '2026-01', '2026-02')
+        result = fetcher.fetch_symbol('BTCUSDT', '2026-01', '2026-02', interval_hours=4)
 
         assert len(result.rows) == 1
         assert result.rows[0]['symbol'] == 'BTCUSDT'
+        assert result.rows[0]['funding_interval_hours'] == '8'
         assert result.missing_months == ['2026-02']
 
     def test_fetch_symbol_raises_on_missing_month_in_strict_mode(self) -> None:
@@ -126,7 +130,7 @@ class TestDatasetFetcher:
             fetcher.fetch_symbol('BTCUSDT', '2026-01', '2026-01', strict=True)
 
     def test_write_dataset_csv_persists_backtest_shape(self, tmp_path: Path) -> None:
-        path = default_output_path(tmp_path, 'BTCUSDT', '2026-01', '2026-02')
+        path = default_output_path(tmp_path, 'BTCUSDT', '2026-01', '2026-02', interval_hours=4)
         write_dataset_csv(
             path,
             [
@@ -136,6 +140,7 @@ class TestDatasetFetcher:
                     'ts': '2026-02-01T00:00:00+00:00',
                     'price': '78320.80',
                     'funding_rate': '-0.00003267',
+                    'funding_interval_hours': '4',
                     'liquidity_usd': '2981356447.19170',
                     'source_month': '2026-02',
                 }
@@ -144,3 +149,9 @@ class TestDatasetFetcher:
         rows = list(csv.DictReader(path.open('r', encoding='utf-8', newline='')))
         assert rows[0]['ts'] == '2026-02-01T00:00:00+00:00'
         assert rows[0]['funding_rate'] == '-0.00003267'
+        assert rows[0]['funding_interval_hours'] == '4'
+        assert path.name.endswith('4h_2026_01_2026_02.csv')
+
+    def test_interval_label_formats_supported_hours(self) -> None:
+        assert interval_to_label(1) == '1h'
+        assert interval_to_label(8) == '8h'

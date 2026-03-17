@@ -8,6 +8,8 @@ from decimal import Decimal
 from typing import Any
 
 from arb.backtest.loader import HistoricalPoint
+from arb.funding import DEFAULT_FUNDING_INTERVAL_HOURS
+from arb.scanner.cost_model import normalize_rate
 
 
 @dataclass(slots=True, frozen=True)
@@ -62,6 +64,7 @@ class FundingBacktester:
         rebalance_threshold_bps: Decimal | None = None,
         open_threshold: Decimal | None = None,
         close_threshold: Decimal | None = None,
+        threshold_interval_hours: int = DEFAULT_FUNDING_INTERVAL_HOURS,
         hysteresis: Decimal = Decimal("0"),
     ) -> None:
         fallback_fee_rate = fee_rate or Decimal("0")
@@ -73,6 +76,7 @@ class FundingBacktester:
         self.rebalance_threshold_bps = rebalance_threshold_bps
         self.open_threshold = open_threshold
         self.close_threshold = close_threshold
+        self.threshold_interval_hours = threshold_interval_hours
         self.hysteresis = hysteresis
 
     def run(self, points: list[HistoricalPoint], *, position_notional: Decimal) -> BacktestResult:
@@ -184,7 +188,12 @@ class FundingBacktester:
 
         for point in points:
             total_liquidity += point.liquidity_usd
-            if is_open and point.funding_rate < close_threshold:
+            normalized_funding_rate = normalize_rate(
+                point.funding_rate,
+                from_interval_hours=point.funding_interval_hours,
+                to_interval_hours=self.threshold_interval_hours,
+            )
+            if is_open and normalized_funding_rate < close_threshold:
                 fee_cost = self.close_fee_rate * position_notional
                 close_fee_cost += fee_cost
                 if trade_state is not None:
@@ -195,7 +204,7 @@ class FundingBacktester:
                 if trade_state is not None:
                     trades.append(self._finalize_trade(trade_state, closed_at=point.ts))
                     trade_state = None
-            elif not is_open and point.funding_rate >= open_threshold:
+            elif not is_open and normalized_funding_rate >= open_threshold:
                 fee_cost = self.open_fee_rate * position_notional
                 open_fee_cost += fee_cost
                 equity -= fee_cost
