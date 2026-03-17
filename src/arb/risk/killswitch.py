@@ -20,6 +20,14 @@ class KillSwitch:
         self.reduce_only = True
         self.reason = reason
 
+    def requires_reduce_only(self) -> bool:
+        return self.active or self.reduce_only
+
+    def close_reason(self, default: str = "manual_close") -> str:
+        if self.active:
+            return "killswitch_active"
+        return self.reason or default
+
     def clear(self) -> None:
         self.active = False
         self.reduce_only = False

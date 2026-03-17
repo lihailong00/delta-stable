@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 
@@ -13,8 +14,21 @@ class RiskAlert:
     symbol: str
 
 
+def _utc_now() -> datetime:
+    return datetime.now(tz=timezone.utc)
+
+
 class RiskChecker:
     """Evaluate common funding arbitrage risk conditions."""
+
+    CLOSE_PRIORITY = {
+        "killswitch_active": 0,
+        "naked_leg": 1,
+        "liquidation_buffer_low": 2,
+        "funding_reversal": 3,
+        "holding_period_exceeded": 4,
+        "basis_out_of_range": 5,
+    }
 
     def check_liquidation_buffer(
         self,
@@ -57,6 +71,21 @@ class RiskChecker:
             return RiskAlert("medium", "funding_reversal", symbol)
         return None
 
+    def check_holding_period(
+        self,
+        *,
+        symbol: str,
+        opened_at: datetime | None,
+        max_holding_period: timedelta,
+        now: datetime | None = None,
+    ) -> RiskAlert | None:
+        if opened_at is None:
+            return None
+        current_time = now or _utc_now()
+        if current_time - opened_at > max_holding_period:
+            return RiskAlert("medium", "holding_period_exceeded", symbol)
+        return None
+
     def check_naked_leg(
         self,
         *,
@@ -72,3 +101,17 @@ class RiskChecker:
         if imbalance > tolerance:
             return RiskAlert("high", "naked_leg", symbol)
         return None
+
+    def choose_close_reason(
+        self,
+        alerts: list[RiskAlert],
+        *,
+        default: str = "manual_close",
+    ) -> str:
+        if not alerts:
+            return default
+        ranked = sorted(
+            alerts,
+            key=lambda alert: self.CLOSE_PRIORITY.get(alert.reason, len(self.CLOSE_PRIORITY)),
+        )
+        return ranked[0].reason
