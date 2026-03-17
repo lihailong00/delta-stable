@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from pydantic import Field
+
+from arb.schemas.base import ArbFrozenModel, SerializableValue
 
 
-@dataclass(slots=True, frozen=True)
-class ControlCommand:
+class ControlCommand(ArbFrozenModel):
     command_id: str
     action: str
     target: str
     requested_by: str
     source: str = "api"
     require_confirmation: bool = False
-    payload: dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, SerializableValue] = Field(default_factory=dict)

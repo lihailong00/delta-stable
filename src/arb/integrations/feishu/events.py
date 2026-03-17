@@ -5,9 +5,19 @@ from __future__ import annotations
 import hashlib
 import hmac
 from collections.abc import Mapping
-from typing import Any
+from typing import Protocol
 
 from arb.control.schemas import CommandRequest
+from arb.integrations.feishu.schemas import FeishuParsedCallback
+from arb.schemas.base import SerializableValue
+
+
+class ControlApiLike(Protocol):
+    def submit_command(self, token: str, request: CommandRequest) -> dict[str, SerializableValue]: ...
+
+    def confirm_command(self, token: str, command_id: str, actor: str) -> dict[str, SerializableValue]: ...
+
+    def cancel_command(self, token: str, command_id: str, actor: str) -> dict[str, SerializableValue]: ...
 
 
 def sign_callback(secret: str, timestamp: str, nonce: str, body: str) -> str:
@@ -35,7 +45,13 @@ class FeishuEventHandler:
         expected = sign_callback(self.signing_secret, timestamp, nonce, body)
         return hmac.compare_digest(expected, signature)
 
-    def parse_callback(self, headers: Mapping[str, str], payload: Mapping[str, Any], *, raw_body: str) -> dict[str, Any]:
+    def parse_callback(
+        self,
+        headers: Mapping[str, str],
+        payload: Mapping[str, SerializableValue],
+        *,
+        raw_body: str,
+    ) -> FeishuParsedCallback:
         if self.verification_token and payload.get("token") not in {None, self.verification_token}:
             raise PermissionError("invalid verification token")
 
@@ -53,57 +69,69 @@ class FeishuEventHandler:
             raise PermissionError("invalid callback signature")
 
         if payload.get("type") == "url_verification":
-            return {"challenge": payload["challenge"]}
+            return FeishuParsedCallback(type="url_verification", challenge=str(payload["challenge"]))
         if "action" in payload:
-            return {
-                "type": "card_action",
-                "action": payload["action"]["value"],
-                "operator_id": payload.get("operator", {}).get("open_id"),
-            }
-        return {"type": "event", "event": payload.get("event", {})}
+            action = payload["action"]
+            if not isinstance(action, Mapping):
+                raise ValueError("invalid action payload")
+            operator = payload.get("operator")
+            operator_id = None
+            if isinstance(operator, Mapping):
+                open_id = operator.get("open_id")
+                operator_id = None if open_id is None else str(open_id)
+            return FeishuParsedCallback(
+                type="card_action",
+                action=dict(action.get("value", {})) if isinstance(action.get("value", {}), Mapping) else {},
+                operator_id=operator_id,
+            )
+        event = payload.get("event")
+        return FeishuParsedCallback(
+            type="event",
+            event=dict(event) if isinstance(event, Mapping) else {},
+        )
 
-    def to_command_payload(self, callback: Mapping[str, Any]) -> dict[str, Any]:
-        action = dict(callback.get("action", {}))
-        command: dict[str, Any] = {
-            "action": str(action.get("action", "")),
-            "requested_by": str(callback.get("operator_id", "")),
-        }
-        if "target" in action:
-            command["target"] = str(action["target"])
-        if "command_id" in action:
-            command["command_id"] = str(action["command_id"])
-        if "require_confirmation" in action:
-            command["require_confirmation"] = bool(action["require_confirmation"])
-        return command
+    def to_command_payload(self, callback: FeishuParsedCallback | Mapping[str, SerializableValue]) -> CommandRequest:
+        parsed = callback if isinstance(callback, FeishuParsedCallback) else FeishuParsedCallback.model_validate(callback)
+        action = dict(parsed.action)
+        return CommandRequest(
+            action=str(action.get("action", "")),
+            target=str(action.get("target", "")),
+            requested_by=str(parsed.operator_id or ""),
+            require_confirmation=bool(action.get("require_confirmation", False)),
+            payload=dict(action.get("payload", {})) if isinstance(action.get("payload", {}), Mapping) else {},
+        )
 
     def dispatch_callback(
         self,
-        callback: Mapping[str, Any],
+        callback: FeishuParsedCallback | Mapping[str, SerializableValue],
         *,
-        control_api: Any,
+        control_api: ControlApiLike,
         token: str,
-    ) -> dict[str, Any]:
-        payload = self.to_command_payload(callback)
-        action = str(payload.get("action", ""))
+    ) -> dict[str, SerializableValue]:
+        if isinstance(callback, FeishuParsedCallback):
+            parsed = callback
+        elif "type" in callback:
+            parsed = FeishuParsedCallback.model_validate(callback)
+        else:
+            parsed = FeishuParsedCallback(
+                type="card_action",
+                action=dict(callback.get("action", {})) if isinstance(callback.get("action", {}), Mapping) else {},
+                operator_id=str(callback.get("operator_id", "")) or None,
+            )
+        action = str(parsed.action.get("action", ""))
         if action == "confirm":
             return control_api.confirm_command(
                 token,
-                str(payload["command_id"]),
-                str(payload["requested_by"]),
+                str(parsed.action["command_id"]),
+                str(parsed.operator_id or ""),
             )
         if action == "cancel":
             return control_api.cancel_command(
                 token,
-                str(payload["command_id"]),
-                str(payload["requested_by"]),
+                str(parsed.action["command_id"]),
+                str(parsed.operator_id or ""),
             )
         return control_api.submit_command(
             token,
-            CommandRequest(
-                action=action,
-                target=str(payload["target"]),
-                requested_by=str(payload["requested_by"]),
-                require_confirmation=bool(payload.get("require_confirmation", False)),
-                payload=dict(payload.get("payload", {})),
-            ),
+            self.to_command_payload(parsed),
         )

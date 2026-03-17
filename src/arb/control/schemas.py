@@ -2,97 +2,66 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
-from typing import Any
+from pydantic import Field
+
+from arb.schemas.base import ArbFrozenModel, SerializableValue
 
 
-@dataclass(slots=True, frozen=True)
-class HealthResponse:
+class HealthResponse(ArbFrozenModel):
     status: str
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(slots=True, frozen=True)
-class PositionResponse:
+class PositionResponse(ArbFrozenModel):
     exchange: str
     symbol: str
-    market_type: str
+    market_type: str = "unknown"
     quantity: str
     direction: str
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(slots=True, frozen=True)
-class StrategyResponse:
+class StrategyResponse(ArbFrozenModel):
     name: str
     status: str
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(slots=True, frozen=True)
-class OrderResponse:
+class OrderResponse(ArbFrozenModel):
     exchange: str
     symbol: str
-    market_type: str
+    market_type: str = "unknown"
     order_id: str
     status: str
     filled_quantity: str
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(slots=True, frozen=True)
-class WorkflowResponse:
+class WorkflowResponse(ArbFrozenModel):
     workflow_id: str
-    workflow_type: str
+    workflow_type: str = "unknown"
     exchange: str
     symbol: str
     status: str
-    payload: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+    payload: dict[str, SerializableValue] = Field(default_factory=dict)
 
 
-@dataclass(slots=True, frozen=True)
-class FundingBoardResponse:
+class FundingBoardResponse(ArbFrozenModel):
     exchange: str
     symbol: str
-    gross_rate: str
+    gross_rate: str = "0"
     net_rate: str
     annualized_net_rate: str
     spread_bps: str
     liquidity_usd: str
     next_funding_time: str | None = None
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(slots=True, frozen=True)
-class CommandRequest:
+class CommandRequest(ArbFrozenModel):
     action: str
     target: str
     requested_by: str
     require_confirmation: bool = False
-    payload: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+    payload: dict[str, SerializableValue] = Field(default_factory=dict)
 
 
-@dataclass(slots=True, frozen=True)
-class CommandResponse:
+class CommandResponse(ArbFrozenModel):
     accepted: bool
     command_id: str
     status: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
