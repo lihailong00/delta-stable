@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from collections.abc import Mapping
 
 from arb.execution.executor import ExecutionLeg, ExecutionResult, PairExecutor
 from arb.execution.router import ExecutionRouter, RouteDecision
@@ -22,7 +22,7 @@ class ClosePositionRequest:
     perp_quantity: Decimal
     spot_price: Decimal
     perp_price: Decimal
-    venue_clients: dict[str, VenueClients]
+    venue_clients: Mapping[str, VenueClients]
     preferred_exchange: str
     fallback_exchange: str | None = None
     exchange_available: bool = True
@@ -48,7 +48,7 @@ class CrossExchangeCloseRequest:
     short_quantity: Decimal
     long_price: Decimal
     short_price: Decimal
-    venue_clients: dict[str, VenueClients]
+    venue_clients: Mapping[str, VenueClients]
     close_reason: str | None = None
     maker_fee_rate: Decimal = Decimal("0")
     taker_fee_rate: Decimal = Decimal("0")

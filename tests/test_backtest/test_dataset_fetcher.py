@@ -10,6 +10,7 @@ from urllib.error import HTTPError
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
+from arb.backtest.schemas import MergedBacktestRow
 from arb.backtest.dataset_fetcher import (
     BinancePublicDataFetcher,
     DatasetFetchError,
@@ -72,17 +73,93 @@ class TestDatasetFetcher:
             [{'open_time': '1769904000000', 'close': '78320.80', 'quote_volume': '2981356447.19'}],
             interval_hours=4,
         )
-        assert merged == [
+        assert len(merged) == 1
+        assert merged[0] == MergedBacktestRow(
+            exchange='binance',
+            symbol='BTCUSDT',
+            ts='2026-02-01T00:00:00+00:00',
+            price='78320.80',
+            funding_rate='-0.00003267',
+            funding_interval_hours=4,
+            liquidity_usd='2981356447.19',
+            source_month='2026-02',
+        )
+
+    def test_merge_month_rows_example_case_shows_input_output_shape(self) -> None:
+        funding_rows = [
             {
-                'exchange': 'binance',
-                'symbol': 'BTCUSDT',
-                'ts': '2026-02-01T00:00:00+00:00',
-                'price': '78320.80',
-                'funding_rate': '-0.00003267',
-                'funding_interval_hours': '4',
-                'liquidity_usd': '2981356447.19',
-                'source_month': '2026-02',
-            }
+                'calc_time': '1769904000001',
+                'last_funding_rate': '0.0001',
+            },
+            {
+                'calc_time': '1769932800001',
+                'last_funding_rate': '-0.0002',
+            },
+            {
+                'calc_time': '1769961600001',
+                'last_funding_rate': '0.00015',
+            },
+        ]
+        kline_rows = [
+            {
+                'open_time': '1769904000000',
+                'close': '50000.00',
+                'quote_volume': '1000000',
+            },
+            {
+                'open_time': '1769932800000',
+                'close': '50500.00',
+                'quote_volume': '1200000',
+            },
+            {
+                'open_time': '1769961600000',
+                'close': '49800.00',
+                'quote_volume': '800000',
+            },
+        ]
+
+        # 这个测试是教学型示例：给定 funding 原始行和 K 线原始行，
+        # merge_month_rows 会按 8 小时时间桶对齐，并输出统一的回测记录结构。
+        merged = merge_month_rows(
+            'BTCUSDT',
+            '2026-02',
+            funding_rows,
+            kline_rows,
+            exchange='binance',
+            interval_hours=8,
+        )
+
+        assert merged == [
+            MergedBacktestRow(
+                exchange='binance',
+                symbol='BTCUSDT',
+                ts='2026-02-01T00:00:00+00:00',
+                price='50000.00',
+                funding_rate='0.0001',
+                funding_interval_hours=8,
+                liquidity_usd='1000000',
+                source_month='2026-02',
+            ),
+            MergedBacktestRow(
+                exchange='binance',
+                symbol='BTCUSDT',
+                ts='2026-02-01T08:00:00+00:00',
+                price='50500.00',
+                funding_rate='-0.0002',
+                funding_interval_hours=8,
+                liquidity_usd='1200000',
+                source_month='2026-02',
+            ),
+            MergedBacktestRow(
+                exchange='binance',
+                symbol='BTCUSDT',
+                ts='2026-02-01T16:00:00+00:00',
+                price='49800.00',
+                funding_rate='0.00015',
+                funding_interval_hours=8,
+                liquidity_usd='800000',
+                source_month='2026-02',
+            ),
         ]
 
     def test_fetch_symbol_skips_missing_months_when_not_strict(self) -> None:
@@ -122,8 +199,8 @@ class TestDatasetFetcher:
         result = fetcher.fetch_symbol('BTCUSDT', '2026-01', '2026-02', interval_hours=4)
 
         assert len(result.rows) == 1
-        assert result.rows[0]['symbol'] == 'BTCUSDT'
-        assert result.rows[0]['funding_interval_hours'] == '8'
+        assert result.rows[0].symbol == 'BTCUSDT'
+        assert result.rows[0].funding_interval_hours == 8
         assert result.missing_months == ['2026-02']
 
     def test_fetch_symbol_raises_on_missing_month_in_strict_mode(self) -> None:
@@ -178,8 +255,8 @@ class TestDatasetFetcher:
 
         # 02:00 这个时间桶没有 funding，应该被过滤掉，只保留两个可匹配的时间桶。
         assert len(merged) == 2
-        assert [row['funding_rate'] for row in merged] == ['0.00010000', '0.00030000']
-        assert [row['price'] for row in merged] == ['2798.10', '2808.40']
+        assert [str(row.funding_rate) for row in merged] == ['0.00010000', '0.00030000']
+        assert [str(row.price) for row in merged] == ['2798.10', '2808.40']
 
     def test_merge_month_rows_uses_requested_interval_when_funding_interval_missing(self) -> None:
         merged = merge_month_rows(
@@ -195,7 +272,7 @@ class TestDatasetFetcher:
             interval_hours=4,
         )
 
-        assert merged[0]['funding_interval_hours'] == '4'
+        assert merged[0].funding_interval_hours == 4
 
     def test_merge_month_rows_uses_explicit_exchange_in_output(self) -> None:
         merged = merge_month_rows(
@@ -212,7 +289,7 @@ class TestDatasetFetcher:
             interval_hours=4,
         )
 
-        assert merged[0]['exchange'] == 'gate'
+        assert merged[0].exchange == 'gate'
 
     def test_fetch_many_keeps_symbol_results_isolated_when_missing_months_differ(self) -> None:
         funding_rows_jan = [
@@ -257,10 +334,10 @@ class TestDatasetFetcher:
         assert [dataset.symbol for dataset in datasets] == ['BTCUSDT', 'ETHUSDT']
         assert datasets[0].missing_months == ['2026-02']
         assert datasets[1].missing_months == ['2026-01']
-        assert [row['symbol'] for row in datasets[0].rows] == ['BTCUSDT']
-        assert [row['symbol'] for row in datasets[1].rows] == ['ETHUSDT']
-        assert datasets[0].rows[0]['funding_rate'] == '-0.00003267'
-        assert datasets[1].rows[0]['funding_rate'] == '0.00011890'
+        assert [row.symbol for row in datasets[0].rows] == ['BTCUSDT']
+        assert [row.symbol for row in datasets[1].rows] == ['ETHUSDT']
+        assert str(datasets[0].rows[0].funding_rate) == '-0.00003267'
+        assert str(datasets[1].rows[0].funding_rate) == '0.00011890'
 
     def test_fetch_symbol_raises_dataset_fetch_error_for_invalid_zip_payload(self) -> None:
         opener = _Opener(

@@ -7,9 +7,13 @@ from decimal import Decimal
 
 from pydantic import ConfigDict, Field
 
+from arb.market.schemas import MarketSnapshot
 from arb.portfolio.reconciler import ReconciliationReport
+from arb.scanner.funding_scanner import FundingOpportunity
 from arb.schemas.base import ArbFrozenModel, ArbModel, SerializableValue
 from arb.strategy.engine import StrategyState
+from arb.workflows.close_position import ClosePositionResult
+from arb.workflows.open_position import OpenPositionResult
 
 
 class ActiveFundingArb(ArbModel):
@@ -66,6 +70,39 @@ class WorkflowStateRecord(ArbFrozenModel):
     status: str
     payload: dict[str, SerializableValue] = Field(default_factory=dict)
     updated_at: str | None = None
+
+
+class RealtimeScanResult(ArbFrozenModel):
+    snapshots: list[MarketSnapshot]
+    opportunities: list[FundingOpportunity]
+    output: list[str]
+
+
+class FundingArbRunResult(ArbFrozenModel):
+    scan: RealtimeScanResult
+    opened: list[OpenPositionResult]
+    closed: list[ClosePositionResult]
+    active: list[ActiveFundingArb]
+
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        arbitrary_types_allowed=True,
+    )
+
+
+class CrossExchangeRunResult(ArbFrozenModel):
+    snapshots: list[MarketSnapshot]
+    opportunities: list[CrossExchangeOpportunity]
+    opened: list[OpenPositionResult]
+    closed: list[ClosePositionResult]
+    active: list[ActiveCrossExchangeArb]
+
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        arbitrary_types_allowed=True,
+    )
 
 
 class RecoveryPlan(ArbModel):

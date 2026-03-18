@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from arb.market.schemas import MarketSnapshot
 from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
 from arb.runtime.pipeline import OpportunityPipeline
+from arb.runtime.schemas import RealtimeScanResult
 from arb.scanner.funding_scanner import FundingOpportunity, FundingScanner
 
 
@@ -34,15 +35,15 @@ class RealtimeScanner:
         targets: list[ScanTarget],
         *,
         dry_run: bool = False,
-    ) -> dict[str, object]:
+    ) -> RealtimeScanResult:
         snapshots: list[MarketSnapshot] = await self.manager.collect_snapshots(targets)
         opportunities = self.scanner.scan(snapshots)
         output = self.pipeline.process(snapshots, opportunities, dry_run=dry_run)
-        return {
-            "snapshots": snapshots,
-            "opportunities": opportunities,
-            "output": output,
-        }
+        return RealtimeScanResult(
+            snapshots=snapshots,
+            opportunities=opportunities,
+            output=output,
+        )
 
     async def run(
         self,
@@ -50,8 +51,8 @@ class RealtimeScanner:
         *,
         iterations: int | None = None,
         dry_run: bool = False,
-    ) -> list[dict[str, object]]:
-        results: list[dict[str, object]] = []
+    ) -> list[RealtimeScanResult]:
+        results: list[RealtimeScanResult] = []
         count = 0
         while iterations is None or count < iterations:
             results.append(await self.scan_once(targets, dry_run=dry_run))

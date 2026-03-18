@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Protocol
 
@@ -11,6 +12,8 @@ from arb.models import Fill, FundingRate, MarketType, Order, Position, Ticker
 from arb.monitoring.metrics import MetricsRegistry
 from arb.scanner.funding_scanner import FundingOpportunity
 from arb.storage.repository import Repository
+from arb.storage.schemas import StoredWorkflowStateRow
+from arb.schemas.base import SerializableValue
 
 
 class MessagePublisher(Protocol):
@@ -33,7 +36,7 @@ class OpportunityPipeline:
 
     def process(
         self,
-        snapshots: list[MarketSnapshot | dict[str, object]],
+        snapshots: Sequence[MarketSnapshot | Mapping[str, object]],
         opportunities: list[FundingOpportunity],
         *,
         dry_run: bool = False,
@@ -43,12 +46,12 @@ class OpportunityPipeline:
         self.metrics.set_gauge("realtime.opportunity_count", Decimal(len(opportunities)))
         return messages
 
-    def persist_snapshots(self, snapshots: list[MarketSnapshot | dict[str, object]]) -> None:
+    def persist_snapshots(self, snapshots: Sequence[MarketSnapshot | Mapping[str, object]]) -> None:
         for raw_snapshot in snapshots:
             snapshot = (
                 raw_snapshot
                 if isinstance(raw_snapshot, MarketSnapshot)
-                else coerce_market_snapshot(raw_snapshot)
+                else coerce_market_snapshot(dict(raw_snapshot))
             )
             self.metrics.increment("realtime.snapshots")
             ticker = snapshot.ticker
@@ -78,18 +81,31 @@ class OpportunityPipeline:
         exchange: str,
         symbol: str,
         status: str,
-        payload: dict[str, object] | None = None,
+        payload: Mapping[str, SerializableValue] | None = None,
     ) -> None:
         self.metrics.increment(f"workflow.{status}")
         if self.repository is not None:
-            self.repository.save_workflow_state(
+            record = StoredWorkflowStateRow(
                 workflow_id=workflow_id,
                 workflow_type=workflow_type,
                 exchange=exchange,
                 symbol=symbol,
                 status=status,
-                payload=payload,
+                payload=dict(payload or {}),
+                updated_at=datetime.now(UTC).isoformat(),
             )
+            if hasattr(self.repository, "save_workflow_state_record"):
+                self.repository.save_workflow_state_record(record)
+            else:
+                self.repository.save_workflow_state(
+                    workflow_id=record.workflow_id,
+                    workflow_type=record.workflow_type,
+                    exchange=record.exchange,
+                    symbol=record.symbol,
+                    status=record.status,
+                    payload=record.payload,
+                    updated_at=datetime.fromisoformat(record.updated_at) if record.updated_at else None,
+                )
 
     def record_order(self, order: Order) -> None:
         if self.repository is not None:

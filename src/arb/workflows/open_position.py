@@ -6,21 +6,21 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
 
 from arb.funding import DEFAULT_FUNDING_INTERVAL_HOURS
 from arb.execution.executor import ExecutionLeg, ExecutionResult, PairExecutor
 from arb.execution.guards import GuardContext
+from arb.execution.protocols import ClockFn, CreateOrderClient
 from arb.execution.router import ExecutionRouter, RouteDecision
-from arb.models import MarketType, Side
+from arb.models import MarketType, Order, Side
 from arb.strategy.spot_perp import SpotPerpInputs, SpotPerpStrategy
 
 
 @dataclass(slots=True, frozen=True)
 class VenueClients:
     exchange: str
-    spot_client: Any
-    perp_client: Any
+    spot_client: CreateOrderClient
+    perp_client: CreateOrderClient
     spot_context: GuardContext | None = None
     perp_context: GuardContext | None = None
 
@@ -67,7 +67,7 @@ class OpenPositionResult:
     reason: str
     route: RouteDecision | None = None
     execution: ExecutionResult | None = None
-    rollback_orders: list[Any] = field(default_factory=list)
+    rollback_orders: list[Order] = field(default_factory=list)
     attempts: int = 0
 
 
@@ -80,7 +80,7 @@ class OpenPositionWorkflow:
         strategy: SpotPerpStrategy | None = None,
         executor: PairExecutor | None = None,
         router: ExecutionRouter | None = None,
-        clock: Any | None = None,
+        clock: ClockFn | None = None,
     ) -> None:
         self.strategy = strategy or SpotPerpStrategy()
         self.executor = executor or PairExecutor()
@@ -290,7 +290,7 @@ class OpenPositionWorkflow:
         execution: ExecutionResult,
         *,
         elapsed_seconds: float,
-    ) -> tuple[list[Any], str | None]:
+    ) -> tuple[list[Order], str | None]:
         if not self._has_exposure(execution):
             if self.router.should_escalate_to_taker(
                 current_mode=route.mode,
@@ -304,7 +304,7 @@ class OpenPositionWorkflow:
         if venue is None:
             return [], execution.reason or f"missing venue: {route.exchange}"
 
-        rollback_orders: list[Any] = []
+        rollback_orders: list[Order] = []
         for order in execution.orders:
             filled_quantity = Decimal(str(getattr(order, "filled_quantity", "0")))
             if filled_quantity <= 0:
@@ -331,7 +331,7 @@ class OpenPositionWorkflow:
         return rollback_orders, reason
 
     def _has_exposure(self, execution: ExecutionResult) -> bool:
-        return any(Decimal(str(getattr(order, "filled_quantity", "0"))) > 0 for order in execution.orders)
+        return any(order.filled_quantity > 0 for order in execution.orders)
 
     def _is_success(self, execution: ExecutionResult) -> bool:
         return execution.status in {"filled", "adjusted"}

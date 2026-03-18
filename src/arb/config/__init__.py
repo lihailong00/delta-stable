@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
+
+from pydantic import Field, field_validator
+
+from arb.schemas.base import ArbFrozenModel
 
 
 def _read_bool(value: str | None, default: bool) -> bool:
@@ -14,26 +17,31 @@ def _read_bool(value: str | None, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-@dataclass(slots=True, frozen=True)
-class AppConfig:
+class AppConfig(ArbFrozenModel):
     """Runtime configuration shared across modules."""
 
     env: str = "dev"
     log_level: str = "INFO"
     timezone: str = "UTC"
-    data_dir: Path = Path("var/data")
+    data_dir: Path = Field(default_factory=lambda: Path("var/data"))
     dry_run: bool = True
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def _normalize_log_level(cls, value: str) -> str:
+        return str(value).upper()
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "AppConfig":
         source = os.environ if env is None else env
-        data_dir = Path(source.get("ARB_DATA_DIR", "var/data"))
-        return cls(
-            env=source.get("ARB_ENV", "dev"),
-            log_level=source.get("ARB_LOG_LEVEL", "INFO").upper(),
-            timezone=source.get("ARB_TIMEZONE", "UTC"),
-            data_dir=data_dir,
-            dry_run=_read_bool(source.get("ARB_DRY_RUN"), True),
+        return cls.model_validate(
+            {
+                "env": source.get("ARB_ENV", "dev"),
+                "log_level": source.get("ARB_LOG_LEVEL", "INFO"),
+                "timezone": source.get("ARB_TIMEZONE", "UTC"),
+                "data_dir": Path(source.get("ARB_DATA_DIR", "var/data")),
+                "dry_run": _read_bool(source.get("ARB_DRY_RUN"), True),
+            }
         )
 
 

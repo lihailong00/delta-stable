@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-
 from arb.execution.private_event_hub import PrivateEventHub
 from arb.market.schemas import NormalizedWsEvent
-from arb.net.ws import WebSocketSession
+from arb.net.ws import Connector, WebSocketSession
 from arb.ws.base import BaseWebSocketClient
-
-Connector = Callable[[str], Awaitable[object]]
 
 
 class PrivateStreamService:

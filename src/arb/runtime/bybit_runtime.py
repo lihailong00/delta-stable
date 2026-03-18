@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
 
 from arb.exchange.bybit import BybitExchange
+from arb.market.schemas import MarketSnapshot, NormalizedWsEvent
 from arb.models import MarketType
 from arb.net.http import HttpTransport
+from arb.net.ws import Connector
 from arb.runtime.snapshots import SnapshotService
 from arb.runtime.streaming import PrivateSessionService, PublicStreamService
+from arb.schemas.base import SerializableValue
 from arb.ws.bybit import BybitWebSocketClient
 
 
@@ -25,7 +28,7 @@ class BybitRuntime:
         public_stream: PublicStreamService,
         private_session: PrivateSessionService,
         *,
-        ws_connector: Any,
+        ws_connector: Connector,
     ) -> None:
         self.exchange = exchange
         self.public_ws_client = public_ws_client
@@ -46,7 +49,7 @@ class BybitRuntime:
         market_type: MarketType = MarketType.SPOT,
         recv_window: int = 5000,
         http_transport: HttpTransport,
-        ws_connector: Any,
+        ws_connector: Connector,
     ) -> "BybitRuntime":
         exchange = BybitExchange(
             api_key,
@@ -88,24 +91,29 @@ class BybitRuntime:
         )
         return True
 
-    async def validate_private_access(self) -> dict[str, Any]:
+    async def validate_private_access(self) -> dict[str, str]:
         balances = await self.exchange.fetch_balances()
         return {key: str(value) for key, value in balances.items()}
 
-    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> dict[str, Any]:
+    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> MarketSnapshot:
         return await self.snapshot_service.fetch_public_snapshot(symbol, market_type)
 
-    def build_private_auth_message(self, expires: int) -> dict[str, Any]:
+    def build_private_auth_message(self, expires: int) -> Mapping[str, SerializableValue]:
         return dict(self.private_ws_client.build_auth_message(expires))
 
-    async def stream_orderbook(self, symbol: str, *, max_messages: int = 1) -> list[dict[str, Any]]:
+    async def stream_orderbook(self, symbol: str, *, max_messages: int = 1) -> list[NormalizedWsEvent]:
         return await self.public_stream.stream("orderbook", symbol=symbol, max_messages=max_messages)
 
-    async def stream_ticker(self, symbol: str, *, max_messages: int = 1) -> list[dict[str, Any]]:
+    async def stream_ticker(self, symbol: str, *, max_messages: int = 1) -> list[NormalizedWsEvent]:
         return await self.public_stream.stream("ticker", symbol=symbol, max_messages=max_messages)
 
-    async def auth_private_ws(self, expires: int, *, max_messages: int = 1) -> list[Any]:
+    async def auth_private_ws(
+        self,
+        expires: int,
+        *,
+        max_messages: int = 1,
+    ) -> list[SerializableValue]:
         return await self.private_session.run(
-            self.private_ws_client.build_auth_message(expires),
+            dict(self.private_ws_client.build_auth_message(expires)),
             max_messages=max_messages,
         )

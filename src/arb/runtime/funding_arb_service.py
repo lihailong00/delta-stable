@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
 
 from arb.execution.executor import ExecutionResult
 from arb.execution.router import RouteDecision
+
 from arb.market.schemas import MarketSnapshot, coerce_market_snapshot
 from arb.models import MarketType, Position, PositionDirection
 from arb.risk.position_monitor import PositionMonitor
 from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
 from arb.runtime.pipeline import OpportunityPipeline
 from arb.runtime.realtime_scanner import RealtimeScanner
-from arb.runtime.schemas import ActiveFundingArb
+from arb.runtime.schemas import ActiveFundingArb, FundingArbRunResult, RealtimeScanResult
 from arb.scanner.funding_scanner import FundingOpportunity
 from arb.strategy.engine import StrategyAction, StrategyState
 from arb.strategy.spot_perp import SpotPerpInputs, SpotPerpStrategy
@@ -60,11 +62,12 @@ class FundingArbService:
         *,
         dry_run: bool = False,
         now: datetime | None = None,
-    ) -> dict[str, object]:
+    ) -> FundingArbRunResult:
         current_time = now or _utc_now()
-        scan_result = await self.scanner.scan_once(targets, dry_run=dry_run)
-        snapshots = [coerce_market_snapshot(snapshot) for snapshot in scan_result["snapshots"]]
-        opportunities = scan_result["opportunities"]
+        raw_scan_result = await self.scanner.scan_once(targets, dry_run=dry_run)
+        scan_result = self._coerce_scan_result(raw_scan_result)
+        snapshots = scan_result.snapshots
+        opportunities = scan_result.opportunities
         snapshot_index = self._snapshot_index(snapshots)
 
         closed: list[ClosePositionResult] = []
@@ -90,9 +93,13 @@ class FundingArbService:
                 now=current_time,
             )
             if monitor_decision.should_close:
-                result = await self._close_position(position, snapshot, reason=monitor_decision.close_reason or "risk_close")
-                closed.append(result)
-                if result.status in {"closed", "reduced"}:
+                close_result = await self._close_position(
+                    position,
+                    snapshot,
+                    reason=monitor_decision.close_reason or "risk_close",
+                )
+                closed.append(close_result)
+                if close_result.status in {"closed", "reduced"}:
                     del self.active_positions[key]
                     self.manager.release_slot(key)
                 continue
@@ -115,9 +122,9 @@ class FundingArbService:
             )
             if decision.action is not StrategyAction.CLOSE:
                 continue
-            result = await self._close_position(position, snapshot, reason=decision.reason)
-            closed.append(result)
-            if result.status in {"closed", "reduced"}:
+            close_result = await self._close_position(position, snapshot, reason=decision.reason)
+            closed.append(close_result)
+            if close_result.status in {"closed", "reduced"}:
                 del self.active_positions[key]
                 self.manager.release_slot(key)
 
@@ -136,14 +143,18 @@ class FundingArbService:
             if snapshot is None or opportunity.exchange not in self.venues:
                 self.manager.release_slot(key)
                 continue
-            result = await self._open_position(opportunity, snapshot, current_time)
-            opened.append(result)
-            if result.status == "opened":
+            open_result = await self._open_position(opportunity, snapshot, current_time)
+            opened.append(open_result)
+            if open_result.status == "opened":
                 spot_quantity = self.position_quantity
                 perp_quantity = self.position_quantity
-                if result.execution is not None and len(result.execution.orders) == 2:
-                    spot_quantity = Decimal(str(result.execution.orders[0].filled_quantity or self.position_quantity))
-                    perp_quantity = Decimal(str(result.execution.orders[1].filled_quantity or self.position_quantity))
+                if open_result.execution is not None and len(open_result.execution.orders) == 2:
+                    spot_quantity = Decimal(
+                        str(open_result.execution.orders[0].filled_quantity or self.position_quantity)
+                    )
+                    perp_quantity = Decimal(
+                        str(open_result.execution.orders[1].filled_quantity or self.position_quantity)
+                    )
                 self.active_positions[key] = ActiveFundingArb(
                     workflow_id=key,
                     exchange=opportunity.exchange,
@@ -152,18 +163,18 @@ class FundingArbService:
                     spot_quantity=spot_quantity,
                     perp_quantity=perp_quantity,
                     opened_at=current_time,
-                    route=result.route,
+                    route=open_result.route,
                     state=StrategyState(is_open=True, opened_at=current_time, hedge_ratio=Decimal("1")),
                 )
             else:
                 self.manager.release_slot(key)
 
-        return {
-            "scan": scan_result,
-            "opened": opened,
-            "closed": closed,
-            "active": list(self.active_positions.values()),
-        }
+        return FundingArbRunResult(
+            scan=scan_result,
+            opened=opened,
+            closed=closed,
+            active=list(self.active_positions.values()),
+        )
 
     async def _open_position(
         self,
@@ -289,6 +300,35 @@ class FundingArbService:
                 continue
             indexed[(funding.exchange, funding.symbol)] = snapshot
         return indexed
+
+    def _coerce_scan_result(
+        self,
+        payload: RealtimeScanResult | Mapping[str, object],
+    ) -> RealtimeScanResult:
+        if isinstance(payload, RealtimeScanResult):
+            return payload
+        raw_snapshots = payload.get("snapshots", [])
+        raw_opportunities = payload.get("opportunities", [])
+        raw_output = payload.get("output", [])
+        snapshot_items = raw_snapshots if isinstance(raw_snapshots, Sequence) and not isinstance(raw_snapshots, str) else []
+        opportunity_items = (
+            raw_opportunities
+            if isinstance(raw_opportunities, Sequence) and not isinstance(raw_opportunities, str)
+            else []
+        )
+        output_items = raw_output if isinstance(raw_output, Sequence) and not isinstance(raw_output, str) else []
+        snapshots = [
+            coerce_market_snapshot(dict(item)) if isinstance(item, Mapping) else item
+            for item in snapshot_items
+            if isinstance(item, (MarketSnapshot, Mapping))
+        ]
+        opportunities = [item for item in opportunity_items if isinstance(item, FundingOpportunity)]
+        output = [str(item) for item in output_items]
+        return RealtimeScanResult(
+            snapshots=snapshots,
+            opportunities=opportunities,
+            output=output,
+        )
 
     def _persist_execution(self, execution: ExecutionResult) -> None:
         for order in execution.orders:

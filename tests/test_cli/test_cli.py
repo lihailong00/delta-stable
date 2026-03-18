@@ -18,8 +18,8 @@ class TestCli:
     def test_settings_validation(self) -> None:
         strategies = StrategySettings(whitelist={'BTC/USDT'}, strategies={'spot_perp': StrategyConfig(name='spot_perp', min_funding_rate=Decimal('0.0005'))})
         exchanges = ExchangeSettings(exchanges={'binance': ExchangeAccountConfig(name='binance', api_key_env='BINANCE_KEY', api_secret_env='BINANCE_SECRET', endpoints=ExchangeEndpointConfig(rest_base_url='https://api.binance.com', ws_public_url='wss://stream.binance.com/ws'))})
-        strategies.validate()
-        exchanges.validate()
+        strategies.validate_config()
+        exchanges.validate_config()
 
     def test_cli_smoke_entrypoint(self) -> None:
         result = main(['scan', '--exchange', 'binance', '--symbol', 'BTC/USDT'])

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 
 from pydantic import ConfigDict
 
@@ -15,15 +15,15 @@ from arb.control.schemas import (
     StrategyResponse,
     WorkflowResponse,
 )
-from arb.schemas.base import ArbModel, SerializableValue
+from arb.schemas.base import ArbModel
 
-PositionsProvider = Callable[[], list[PositionResponse | Mapping[str, SerializableValue]]]
-StrategiesProvider = Callable[[], list[StrategyResponse | Mapping[str, SerializableValue]]]
-OrdersProvider = Callable[[], list[OrderResponse | Mapping[str, SerializableValue]]]
-WorkflowsProvider = Callable[[], list[WorkflowResponse | Mapping[str, SerializableValue]]]
-FundingBoardProvider = Callable[[], list[FundingBoardResponse | Mapping[str, SerializableValue]]]
-CommandHandler = Callable[[CommandRequest], CommandResponse | Mapping[str, SerializableValue]]
-CommandDecisionHandler = Callable[[str, str], CommandResponse | Mapping[str, SerializableValue]]
+PositionsProvider = Callable[[], list[PositionResponse]]
+StrategiesProvider = Callable[[], list[StrategyResponse]]
+OrdersProvider = Callable[[], list[OrderResponse]]
+WorkflowsProvider = Callable[[], list[WorkflowResponse]]
+FundingBoardProvider = Callable[[], list[FundingBoardResponse]]
+CommandHandler = Callable[[CommandRequest], CommandResponse]
+CommandDecisionHandler = Callable[[str, str], CommandResponse]
 
 
 class ApiContext(ArbModel):

@@ -11,7 +11,7 @@ class TestLiveRuntimeConfig:
 
     def test_credentials_and_testnet_switches_validate(self) -> None:
         settings = ExchangeSettings(exchanges={'binance': ExchangeAccountConfig(name='binance', api_key_env='BINANCE_KEY', api_secret_env='BINANCE_SECRET', testnet=True, endpoints=ExchangeEndpointConfig(rest_base_url='https://api.binance.com', ws_public_url='wss://stream.binance.com/ws', testnet_rest_base_url='https://testnet.binance.vision', testnet_ws_public_url='wss://stream.testnet.binance.vision/ws'))})
-        settings.validate()
+        settings.validate_config()
 
     def test_live_config_loads_mode_and_flags(self) -> None:
         config = load_live_config({'ARB_ENV': 'prod', 'ARB_RUNTIME_MODE': 'live', 'ARB_READ_ONLY': 'false', 'ARB_ENABLE_ORDERS': 'true'})

@@ -10,7 +10,7 @@ from arb.market.schemas import MarketSnapshot, coerce_market_snapshot
 from arb.models import MarketType, Position, PositionDirection
 from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
 from arb.runtime.pipeline import OpportunityPipeline
-from arb.runtime.schemas import ActiveCrossExchangeArb, CrossExchangeOpportunity
+from arb.runtime.schemas import ActiveCrossExchangeArb, CrossExchangeOpportunity, CrossExchangeRunResult
 from arb.strategy.engine import StrategyAction, StrategyState
 from arb.strategy.perp_spread import PerpSpreadInputs, PerpSpreadStrategy
 from arb.workflows.close_position import CrossExchangeCloseRequest, ClosePositionResult, ClosePositionWorkflow
@@ -51,7 +51,7 @@ class CrossExchangeFundingService:
         targets: list[ScanTarget],
         *,
         now: datetime | None = None,
-    ) -> dict[str, object]:
+    ) -> CrossExchangeRunResult:
         current_time = now or _utc_now()
         snapshots = [coerce_market_snapshot(snapshot) for snapshot in await self.manager.collect_snapshots(targets)]
         snapshot_index = self._snapshot_index(snapshots)
@@ -78,9 +78,14 @@ class CrossExchangeFundingService:
             )
             if decision.action is not StrategyAction.CLOSE:
                 continue
-            result = await self._close_position(position, long_snapshot, short_snapshot, reason=decision.reason)
-            closed.append(result)
-            if result.status == "closed":
+            close_result = await self._close_position(
+                position,
+                long_snapshot,
+                short_snapshot,
+                reason=decision.reason,
+            )
+            closed.append(close_result)
+            if close_result.status == "closed":
                 del self.active_positions[key]
                 self.manager.release_slot(key)
 
@@ -92,30 +97,30 @@ class CrossExchangeFundingService:
                 continue
             if not self.manager.acquire_slot(workflow_id):
                 continue
-            result = await self._open_position(opportunity, current_time)
-            opened.append(result)
-            if result.status == "opened":
+            open_result = await self._open_position(opportunity, current_time)
+            opened.append(open_result)
+            if open_result.status == "opened":
                 self.active_positions[workflow_id] = ActiveCrossExchangeArb(
                     workflow_id=workflow_id,
                     symbol=opportunity.symbol,
                     long_exchange=opportunity.long_exchange,
                     short_exchange=opportunity.short_exchange,
                     quantity=self.position_quantity,
-                    long_quantity=self._filled_quantity(result, 0),
-                    short_quantity=self._filled_quantity(result, 1),
+                    long_quantity=self._filled_quantity(open_result, 0),
+                    short_quantity=self._filled_quantity(open_result, 1),
                     opened_at=current_time,
                     state=StrategyState(is_open=True, opened_at=current_time, hedge_ratio=Decimal("1")),
                 )
             else:
                 self.manager.release_slot(workflow_id)
 
-        return {
-            "snapshots": snapshots,
-            "opportunities": opportunities,
-            "opened": opened,
-            "closed": closed,
-            "active": list(self.active_positions.values()),
-        }
+        return CrossExchangeRunResult(
+            snapshots=snapshots,
+            opportunities=opportunities,
+            opened=opened,
+            closed=closed,
+            active=list(self.active_positions.values()),
+        )
 
     async def _open_position(
         self,

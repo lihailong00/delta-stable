@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from decimal import Decimal
 
 from arb.funding import DEFAULT_FUNDING_INTERVAL_HOURS
@@ -52,7 +52,7 @@ class FundingScanner:
 
     def scan(
         self,
-        snapshots: list[MarketSnapshot | Mapping[str, SerializableValue]],
+        snapshots: Sequence[MarketSnapshot | Mapping[str, SerializableValue]],
     ) -> list[FundingOpportunity]:
         candidates: list[FundingOpportunity] = []
         for raw_snapshot in snapshots:

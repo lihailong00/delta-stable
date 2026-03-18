@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from arb.exchange.binance import BinanceExchange
+from arb.market.schemas import MarketSnapshot, NormalizedWsEvent
 from arb.models import MarketType
 from arb.net.http import HttpTransport
+from arb.net.ws import Connector
 from arb.runtime.snapshots import SnapshotService
 from arb.runtime.streaming import PublicStreamService
 from arb.ws.binance import BinanceWebSocketClient
@@ -23,7 +23,7 @@ class BinanceRuntime:
         snapshot_service: SnapshotService,
         orderbook_stream: PublicStreamService,
         *,
-        ws_connector: Any,
+        ws_connector: Connector,
     ) -> None:
         self.exchange = exchange
         self.ws_client = ws_client
@@ -41,7 +41,7 @@ class BinanceRuntime:
         api_secret: str,
         market_type: MarketType = MarketType.SPOT,
         http_transport: HttpTransport,
-        ws_connector: Any,
+        ws_connector: Connector,
     ) -> "BinanceRuntime":
         exchange = BinanceExchange(api_key, api_secret, transport=http_transport.request)
         ws_client = BinanceWebSocketClient(market_type)
@@ -66,12 +66,12 @@ class BinanceRuntime:
         await self.http_transport.request({"method": "GET", "url": f"{base}{path}"})
         return True
 
-    async def validate_private_access(self) -> dict[str, Any]:
+    async def validate_private_access(self) -> dict[str, str]:
         balances = await self.exchange.fetch_balances()
         return {key: str(value) for key, value in balances.items()}
 
-    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> dict[str, Any]:
+    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> MarketSnapshot:
         return await self.snapshot_service.fetch_public_snapshot(symbol, market_type)
 
-    async def stream_orderbook(self, symbol: str, *, max_messages: int = 1) -> list[dict[str, Any]]:
+    async def stream_orderbook(self, symbol: str, *, max_messages: int = 1) -> list[NormalizedWsEvent]:
         return await self.orderbook_stream.stream("depth", symbol=symbol, max_messages=max_messages)

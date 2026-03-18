@@ -198,7 +198,7 @@ def resolve_runtime_endpoints(
     account: ExchangeAccountConfig,
 ) -> RuntimeEndpointSelection:
     return LiveRuntimeFactory(
-        settings=ExchangeSettings({account.name: account}),
+        settings=ExchangeSettings(exchanges={account.name: account}),
         config=config,
         env={},
         http_transport_factory=lambda _: HttpTransport(client=_NullHttpClient()),

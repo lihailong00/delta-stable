@@ -71,43 +71,43 @@ class ControlAPI:
     ) -> "ControlAPI":
         return cls(bridge.build_api_context(dispatcher, auth_token=auth_token))  # type: ignore[attr-defined]
 
-    def health(self) -> dict[str, SerializableValue]:
-        return HealthResponse(status="ok").to_dict()
+    def health(self) -> HealthResponse:
+        return HealthResponse(status="ok")
 
-    def positions(self, token: str | None) -> list[dict[str, SerializableValue]]:
+    def positions(self, token: str | None) -> list[PositionResponse]:
         self.context.require_token(token)
-        return [self._coerce(PositionResponse, payload).to_dict() for payload in self.context.positions_provider()]
+        return [self._coerce(PositionResponse, payload) for payload in self.context.positions_provider()]
 
-    def strategies(self, token: str | None) -> list[dict[str, SerializableValue]]:
+    def strategies(self, token: str | None) -> list[StrategyResponse]:
         self.context.require_token(token)
-        return [self._coerce(StrategyResponse, payload).to_dict() for payload in self.context.strategies_provider()]
+        return [self._coerce(StrategyResponse, payload) for payload in self.context.strategies_provider()]
 
-    def orders(self, token: str | None) -> list[dict[str, SerializableValue]]:
+    def orders(self, token: str | None) -> list[OrderResponse]:
         self.context.require_token(token)
-        return [self._coerce(OrderResponse, payload).to_dict() for payload in self.context.orders_provider()]
+        return [self._coerce(OrderResponse, payload) for payload in self.context.orders_provider()]
 
-    def workflows(self, token: str | None) -> list[dict[str, SerializableValue]]:
+    def workflows(self, token: str | None) -> list[WorkflowResponse]:
         self.context.require_token(token)
-        return [self._coerce(WorkflowResponse, payload).to_dict() for payload in self.context.workflows_provider()]
+        return [self._coerce(WorkflowResponse, payload) for payload in self.context.workflows_provider()]
 
-    def funding_board(self, token: str | None) -> list[dict[str, SerializableValue]]:
+    def funding_board(self, token: str | None) -> list[FundingBoardResponse]:
         self.context.require_token(token)
-        return [self._coerce(FundingBoardResponse, payload).to_dict() for payload in self.context.funding_board_provider()]
+        return [self._coerce(FundingBoardResponse, payload) for payload in self.context.funding_board_provider()]
 
-    def submit_command(self, token: str | None, request: CommandRequest) -> dict[str, SerializableValue]:
+    def submit_command(self, token: str | None, request: CommandRequest) -> CommandResponse:
         self.context.require_token(token)
         response = self.context.command_handler(request)
-        return self._coerce(CommandResponse, response).to_dict()
+        return self._coerce(CommandResponse, response)
 
-    def confirm_command(self, token: str | None, command_id: str, actor: str) -> dict[str, SerializableValue]:
+    def confirm_command(self, token: str | None, command_id: str, actor: str) -> CommandResponse:
         self.context.require_token(token)
         response = self.context.command_confirmer(command_id, actor)
-        return self._coerce(CommandResponse, response).to_dict()
+        return self._coerce(CommandResponse, response)
 
-    def cancel_command(self, token: str | None, command_id: str, actor: str) -> dict[str, SerializableValue]:
+    def cancel_command(self, token: str | None, command_id: str, actor: str) -> CommandResponse:
         self.context.require_token(token)
         response = self.context.command_canceller(command_id, actor)
-        return self._coerce(CommandResponse, response).to_dict()
+        return self._coerce(CommandResponse, response)
 
     @staticmethod
     def _coerce[T: ArbFrozenModel](schema: type[T], payload: T | Mapping[str, SerializableValue]) -> T:
@@ -124,38 +124,38 @@ def create_app(context: ApiContext) -> object:
 
     @app.get("/health")
     def health() -> dict[str, SerializableValue]:
-        return service.health()
+        return service.health().to_dict()
 
     @app.get("/positions")
     def positions(token: str | None = None) -> list[dict[str, SerializableValue]]:
-        return service.positions(token)
+        return [item.to_dict() for item in service.positions(token)]
 
     @app.get("/strategies")
     def strategies(token: str | None = None) -> list[dict[str, SerializableValue]]:
-        return service.strategies(token)
+        return [item.to_dict() for item in service.strategies(token)]
 
     @app.get("/orders")
     def orders(token: str | None = None) -> list[dict[str, SerializableValue]]:
-        return service.orders(token)
+        return [item.to_dict() for item in service.orders(token)]
 
     @app.get("/workflows")
     def workflows(token: str | None = None) -> list[dict[str, SerializableValue]]:
-        return service.workflows(token)
+        return [item.to_dict() for item in service.workflows(token)]
 
     @app.get("/funding-board")
     def funding_board(token: str | None = None) -> list[dict[str, SerializableValue]]:
-        return service.funding_board(token)
+        return [item.to_dict() for item in service.funding_board(token)]
 
     @app.post("/commands")
     def commands(request: Mapping[str, SerializableValue], token: str | None = None) -> dict[str, SerializableValue]:
-        return service.submit_command(token, CommandRequest.model_validate(request))
+        return service.submit_command(token, CommandRequest.model_validate(request)).to_dict()
 
     @app.post("/commands/{command_id}/confirm")
     def confirm(command_id: str, request: Mapping[str, SerializableValue], token: str | None = None) -> dict[str, SerializableValue]:
-        return service.confirm_command(token, command_id, str(request["requested_by"]))
+        return service.confirm_command(token, command_id, str(request["requested_by"])).to_dict()
 
     @app.post("/commands/{command_id}/cancel")
     def cancel(command_id: str, request: Mapping[str, SerializableValue], token: str | None = None) -> dict[str, SerializableValue]:
-        return service.cancel_command(token, command_id, str(request["requested_by"]))
+        return service.cancel_command(token, command_id, str(request["requested_by"])).to_dict()
 
     return app

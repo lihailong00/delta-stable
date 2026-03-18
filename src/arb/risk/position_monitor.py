@@ -2,19 +2,70 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from collections.abc import Mapping
+
+from pydantic import Field
 
 from arb.funding import DEFAULT_FUNDING_INTERVAL_HOURS
+from arb.market.schemas import MarketSnapshot, coerce_funding_rate, coerce_ticker
+from arb.market.spot_perp_view import SpotPerpQuoteView, build_spot_perp_view
+from arb.models import MarketType
 from arb.scanner.cost_model import normalize_rate
 from arb.risk.checks import RiskAlert, RiskChecker
+from arb.schemas.base import ArbFrozenModel, ArbModel, SerializableValue
 
 
-@dataclass(slots=True)
-class PositionMonitorDecision:
-    alerts: list[RiskAlert] = field(default_factory=list)
+class PositionMonitorSnapshot(ArbFrozenModel):
+    ticker: object
+    funding: object | None = None
+    view: SpotPerpQuoteView | None = None
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        snapshot: MarketSnapshot | Mapping[str, object],
+        *,
+        symbol: str,
+    ) -> "PositionMonitorSnapshot":
+        if isinstance(snapshot, MarketSnapshot):
+            return cls(ticker=snapshot.ticker, funding=snapshot.funding)
+        ticker_payload = snapshot.get("ticker")
+        if not isinstance(ticker_payload, Mapping):
+            raise TypeError("snapshot.ticker is required")
+        funding_payload = snapshot.get("funding")
+        view_payload = snapshot.get("view")
+        view = None
+        if isinstance(view_payload, Mapping) and isinstance(funding_payload, Mapping):
+            spot_ticker = view_payload.get("spot_ticker")
+            perp_ticker = view_payload.get("perp_ticker")
+            if isinstance(spot_ticker, Mapping) and isinstance(perp_ticker, Mapping):
+                exchange = str(funding_payload.get("exchange", ticker_payload.get("exchange", "")))
+                view = build_spot_perp_view(
+                    exchange=exchange,
+                    symbol=symbol,
+                    spot_ticker=dict(spot_ticker),
+                    perp_ticker=dict(perp_ticker),
+                    funding=dict(funding_payload),
+                )
+        return cls(
+            ticker=coerce_ticker(
+                dict(ticker_payload),
+                default_symbol=symbol,
+                default_market_type=MarketType.PERPETUAL,
+            ),
+            funding=(
+                coerce_funding_rate(dict(funding_payload), default_symbol=symbol)
+                if isinstance(funding_payload, Mapping)
+                else None
+            ),
+            view=view,
+        )
+
+
+class PositionMonitorDecision(ArbModel):
+    alerts: list[RiskAlert] = Field(default_factory=list)
     close_reason: str | None = None
 
     @property
@@ -42,7 +93,7 @@ class PositionMonitor:
         self,
         *,
         symbol: str,
-        snapshot: dict[str, Any],
+        snapshot: PositionMonitorSnapshot | MarketSnapshot,
         spot_quantity: Decimal,
         perp_quantity: Decimal,
         opened_at: datetime | None,
@@ -53,12 +104,17 @@ class PositionMonitor:
         liquidation_price: Decimal | None = None,
         now: datetime | None = None,
     ) -> PositionMonitorDecision:
+        normalized_snapshot = (
+            snapshot
+            if isinstance(snapshot, PositionMonitorSnapshot)
+            else PositionMonitorSnapshot.from_snapshot(snapshot, symbol=symbol)
+        )
         alerts: list[RiskAlert] = []
-        funding = snapshot.get("funding", {})
+        funding = normalized_snapshot.funding
         funding_alert = self.risk_checker.check_funding_reversal(
             symbol=symbol,
             current_rate=normalize_rate(
-                Decimal(str(funding.get("rate", "0"))),
+                Decimal(str(getattr(funding, "rate", "0"))),
                 from_interval_hours=funding_interval_hours,
                 to_interval_hours=comparison_interval_hours,
             ),
@@ -85,20 +141,20 @@ class PositionMonitor:
         if naked_alert is not None:
             alerts.append(naked_alert)
 
-        view = snapshot.get("view")
-        if isinstance(view, dict):
+        view = normalized_snapshot.view
+        if view is not None:
             basis_alert = self.risk_checker.check_basis(
                 symbol=symbol,
-                spot_price=Decimal(str(view["spot_ticker"]["ask"])),
-                perp_price=Decimal(str(view["perp_ticker"]["bid"])),
+                spot_price=view.spot_ticker.ask,
+                perp_price=view.perp_ticker.bid,
                 max_basis_bps=self.max_basis_bps,
             )
             if basis_alert is not None:
                 alerts.append(basis_alert)
 
         if liquidation_price is not None:
-            ticker = snapshot.get("ticker", {})
-            mark_price = Decimal(str(ticker.get("last", ticker.get("bid", "0"))))
+            ticker = normalized_snapshot.ticker
+            mark_price = Decimal(str(getattr(ticker, "last", getattr(ticker, "bid", "0"))))
             liquidation_alert = self.risk_checker.check_liquidation_buffer(
                 symbol=symbol,
                 mark_price=mark_price,

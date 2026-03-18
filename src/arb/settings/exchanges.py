@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from pydantic import Field
+
+from arb.schemas.base import ArbFrozenModel
 
 
-@dataclass(slots=True, frozen=True)
-class ExchangeEndpointConfig:
+class ExchangeEndpointConfig(ArbFrozenModel):
     rest_base_url: str
     ws_public_url: str
     ws_private_url: str | None = None
@@ -34,8 +35,7 @@ class ExchangeEndpointConfig:
         return self.ws_private_url
 
 
-@dataclass(slots=True, frozen=True)
-class ExchangeAccountConfig:
+class ExchangeAccountConfig(ArbFrozenModel):
     name: str
     enabled: bool = True
     api_key_env: str | None = None
@@ -46,11 +46,10 @@ class ExchangeAccountConfig:
     endpoints: ExchangeEndpointConfig | None = None
 
 
-@dataclass(slots=True)
-class ExchangeSettings:
-    exchanges: dict[str, ExchangeAccountConfig] = field(default_factory=dict)
+class ExchangeSettings(ArbFrozenModel):
+    exchanges: dict[str, ExchangeAccountConfig] = Field(default_factory=dict)
 
-    def validate(self) -> None:
+    def validate_config(self) -> None:
         for name, config in self.exchanges.items():
             if config.enabled and (not config.api_key_env or not config.api_secret_env):
                 raise ValueError(f"exchange {name} is enabled but missing credential env vars")

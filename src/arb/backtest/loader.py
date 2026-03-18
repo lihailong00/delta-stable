@@ -2,31 +2,41 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
-from decimal import Decimal
-from typing import Any
+from collections.abc import Mapping
 
+from arb.backtest.schemas import HistoricalPoint, MergedBacktestRow
 from arb.funding import DEFAULT_FUNDING_INTERVAL_HOURS
+from arb.schemas.base import SerializableValue
 
 
-@dataclass(slots=True, frozen=True)
-class HistoricalPoint:
-    ts: datetime
-    price: Decimal
-    funding_rate: Decimal
-    liquidity_usd: Decimal
-    funding_interval_hours: int = DEFAULT_FUNDING_INTERVAL_HOURS
-
-
-def load_points(rows: list[dict[str, Any]]) -> list[HistoricalPoint]:
-    return [
-        HistoricalPoint(
-            ts=datetime.fromisoformat(str(row["ts"])),
-            price=Decimal(str(row["price"])),
-            funding_rate=Decimal(str(row["funding_rate"])),
-            funding_interval_hours=int(row.get("funding_interval_hours", DEFAULT_FUNDING_INTERVAL_HOURS)),
-            liquidity_usd=Decimal(str(row.get("liquidity_usd", "0"))),
+def load_points(
+    rows: list[MergedBacktestRow | Mapping[str, SerializableValue]],
+) -> list[HistoricalPoint]:
+    points: list[HistoricalPoint] = []
+    for row in rows:
+        if isinstance(row, MergedBacktestRow):
+            points.append(
+                HistoricalPoint(
+                    ts=row.ts,
+                    price=row.price,
+                    funding_rate=row.funding_rate,
+                    funding_interval_hours=row.funding_interval_hours,
+                    liquidity_usd=row.liquidity_usd,
+                )
+            )
+            continue
+        points.append(
+            HistoricalPoint.model_validate(
+                {
+                    "ts": row["ts"],
+                    "price": row["price"],
+                    "funding_rate": row["funding_rate"],
+                    "funding_interval_hours": row.get(
+                        "funding_interval_hours",
+                        DEFAULT_FUNDING_INTERVAL_HOURS,
+                    ),
+                    "liquidity_usd": row.get("liquidity_usd", "0"),
+                }
+            )
         )
-        for row in rows
-    ]
+    return points

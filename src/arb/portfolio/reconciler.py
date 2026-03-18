@@ -3,24 +3,24 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
+
+from pydantic import Field
 
 from arb.models import MarketType, Order, Position
+from arb.schemas.base import ArbFrozenModel, ArbModel, SerializableValue
+from arb.storage.schemas import StoredOrderRow, StoredPositionRow
 
 
-@dataclass(slots=True, frozen=True)
-class ReconciliationIssue:
+class ReconciliationIssue(ArbFrozenModel):
     entity: str
     key: str
     issue: str
 
 
-@dataclass(slots=True)
-class ReconciliationReport:
-    position_issues: list[ReconciliationIssue] = field(default_factory=list)
-    order_issues: list[ReconciliationIssue] = field(default_factory=list)
+class ReconciliationReport(ArbModel):
+    position_issues: list[ReconciliationIssue] = Field(default_factory=list)
+    order_issues: list[ReconciliationIssue] = Field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -33,9 +33,9 @@ class PortfolioReconciler:
     def reconcile(
         self,
         *,
-        local_positions: Sequence[Position | Mapping[str, Any]],
+        local_positions: Sequence[Position | StoredPositionRow | Mapping[str, SerializableValue]],
         exchange_positions: Sequence[Position],
-        local_orders: Sequence[Order | Mapping[str, Any]],
+        local_orders: Sequence[Order | StoredOrderRow | Mapping[str, SerializableValue]],
         exchange_orders: Sequence[Order],
         quantity_tolerance: Decimal = Decimal("0.000001"),
     ) -> ReconciliationReport:
@@ -48,7 +48,7 @@ class PortfolioReconciler:
 
     def _reconcile_positions(
         self,
-        local_positions: Sequence[Position | Mapping[str, Any]],
+        local_positions: Sequence[Position | StoredPositionRow | Mapping[str, SerializableValue]],
         exchange_positions: Sequence[Position],
         quantity_tolerance: Decimal,
     ) -> list[ReconciliationIssue]:
@@ -60,19 +60,19 @@ class PortfolioReconciler:
             exchange_position = exchange_index.get(key)
             local_quantity = self._position_quantity(local)
             if exchange_position is None:
-                issues.append(ReconciliationIssue("position", key, "missing_exchange_position"))
+                issues.append(ReconciliationIssue(entity="position", key=key, issue="missing_exchange_position"))
                 continue
             if abs(local_quantity - exchange_position.quantity) > quantity_tolerance:
-                issues.append(ReconciliationIssue("position", key, "position_quantity_mismatch"))
+                issues.append(ReconciliationIssue(entity="position", key=key, issue="position_quantity_mismatch"))
 
         for key in exchange_index:
             if key not in local_index:
-                issues.append(ReconciliationIssue("position", key, "missing_local_position"))
+                issues.append(ReconciliationIssue(entity="position", key=key, issue="missing_local_position"))
         return issues
 
     def _reconcile_orders(
         self,
-        local_orders: Sequence[Order | Mapping[str, Any]],
+        local_orders: Sequence[Order | StoredOrderRow | Mapping[str, SerializableValue]],
         exchange_orders: Sequence[Order],
     ) -> list[ReconciliationIssue]:
         exchange_index = {self._order_key(order): order for order in exchange_orders}
@@ -83,23 +83,33 @@ class PortfolioReconciler:
             exchange_order = exchange_index.get(key)
             local_status = self._order_status(local)
             if exchange_order is None and local_status in {"new", "partially_filled"}:
-                issues.append(ReconciliationIssue("order", key, "stale_local_open_order"))
+                issues.append(ReconciliationIssue(entity="order", key=key, issue="stale_local_open_order"))
                 continue
             if exchange_order is not None and local_status != exchange_order.status.value:
-                issues.append(ReconciliationIssue("order", key, "order_status_mismatch"))
+                issues.append(ReconciliationIssue(entity="order", key=key, issue="order_status_mismatch"))
 
         for key in exchange_index:
             if key not in local_index:
-                issues.append(ReconciliationIssue("order", key, "missing_local_order"))
+                issues.append(ReconciliationIssue(entity="order", key=key, issue="missing_local_order"))
         return issues
 
-    def _position_key(self, position: Position | Mapping[str, Any]) -> str:
+    def _position_key(
+        self,
+        position: Position | StoredPositionRow | Mapping[str, SerializableValue],
+    ) -> str:
         if isinstance(position, Position):
             parts = (
                 position.exchange,
                 position.symbol,
                 position.market_type.value,
                 position.direction.value,
+            )
+        elif isinstance(position, StoredPositionRow):
+            parts = (
+                position.exchange,
+                position.symbol,
+                position.market_type,
+                position.direction,
             )
         else:
             parts = (
@@ -110,17 +120,26 @@ class PortfolioReconciler:
             )
         return "|".join(parts)
 
-    def _position_quantity(self, position: Position | Mapping[str, Any]) -> Decimal:
+    def _position_quantity(
+        self,
+        position: Position | StoredPositionRow | Mapping[str, SerializableValue],
+    ) -> Decimal:
         if isinstance(position, Position):
             return position.quantity
+        if isinstance(position, StoredPositionRow):
+            return Decimal(position.quantity)
         return Decimal(str(position["quantity"]))
 
-    def _order_key(self, order: Order | Mapping[str, Any]) -> str:
+    def _order_key(self, order: Order | StoredOrderRow | Mapping[str, SerializableValue]) -> str:
         if isinstance(order, Order):
+            return str(order.order_id)
+        if isinstance(order, StoredOrderRow):
             return str(order.order_id)
         return str(order["order_id"])
 
-    def _order_status(self, order: Order | Mapping[str, Any]) -> str:
+    def _order_status(self, order: Order | StoredOrderRow | Mapping[str, SerializableValue]) -> str:
         if isinstance(order, Order):
             return order.status.value
+        if isinstance(order, StoredOrderRow):
+            return order.status
         return str(order["status"])

@@ -25,14 +25,31 @@
 - WS 标准化事件
 - scanner 输出
 - workflow 状态
+- 回测数据行、回测报告、运行结果
 - 控制 API 请求/响应
 - 飞书回调和卡片数据
 - CLI 和 bootstrap 的对外配置对象
+- 存储层读写行对象
+
+## 行为接口用 Protocol
+
+下面这些不是数据对象，优先用 `Protocol`，不要硬塞成 `BaseModel`：
+
+- 执行层 exchange client
+- order tracker 依赖的轮询 / 撤单 / fill 查询接口
+- workflow 里的 venue client
+- runtime 的 ws connector / streaming helper
+
+判断规则很简单：
+
+- “这是一段固定字段的数据” -> `Pydantic`
+- “这是一个需要实现某些方法的协作者” -> `Protocol`
 
 ## 可以保留原始映射的边界
 
 - 交易所 REST/WS 收到的最原始 JSON
 - 网络层 connector 的极薄适配接口
+- 少量兼容旧接口的过渡适配层
 
 这些原始载荷一旦进入系统，必须尽快转成模型。
 

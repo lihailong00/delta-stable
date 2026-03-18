@@ -30,7 +30,7 @@ class WorkflowRecovery:
         workflow_statuses: tuple[str, ...] = ("pending", "running", "closing"),
     ) -> RecoveryPlan:
         workflows = [
-            WorkflowStateRecord.model_validate(workflow)
+            WorkflowStateRecord.model_validate(workflow.to_dict() if hasattr(workflow, "to_dict") else workflow)
             for workflow in self.repository.list_workflow_states(statuses=workflow_statuses)
             if workflow["exchange"] == exchange and (symbol is None or workflow["symbol"] == symbol)
         ]

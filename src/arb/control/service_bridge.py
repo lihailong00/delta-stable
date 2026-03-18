@@ -20,8 +20,9 @@ from arb.control.schemas import (
     WorkflowResponse,
 )
 from arb.models import MarketType
-from arb.runtime.schemas import ActiveFundingArb, RecoveryPlan
+from arb.runtime.schemas import ActiveFundingArb, RecoveryPlan, WorkflowStateRecord
 from arb.schemas.base import ArbModel, SerializableValue
+from arb.storage.schemas import StoredOrderRow, StoredWorkflowStateRow
 
 
 class ServiceLike(Protocol):
@@ -34,9 +35,9 @@ class ServiceLike(Protocol):
 class RepositoryLike(Protocol):
     def save_workflow_state(self, **payload: object) -> None: ...
 
-    def list_workflow_states(self) -> list[Mapping[str, SerializableValue]]: ...
+    def list_workflow_states(self) -> list[StoredWorkflowStateRow | Mapping[str, SerializableValue]]: ...
 
-    def list_orders(self) -> list[Mapping[str, SerializableValue]]: ...
+    def list_orders(self) -> list[StoredOrderRow | Mapping[str, SerializableValue]]: ...
 
 
 class RecoveryLike(Protocol):

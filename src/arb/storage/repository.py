@@ -6,10 +6,18 @@ import json
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
 
 from arb.models import Fill, FundingRate, Order, Position, Ticker
+from arb.schemas.base import SerializableValue
 from arb.storage.db import Database
+from arb.storage.schemas import (
+    StoredFillRow,
+    StoredFundingSnapshotRow,
+    StoredOrderRow,
+    StoredOrderStatusRow,
+    StoredPositionRow,
+    StoredWorkflowStateRow,
+)
 
 
 def _to_iso(value: datetime) -> str:
@@ -115,8 +123,31 @@ class Repository:
                 ),
             )
 
-    def save_fill(self, fill: Mapping[str, Any] | Fill) -> None:
-        payload = fill.to_dict() if isinstance(fill, Fill) else dict(fill)
+    def save_fill(self, fill: Fill | StoredFillRow) -> None:
+        if isinstance(fill, Fill):
+            fill_id = fill.fill_id
+            order_id = fill.order_id
+            exchange = fill.exchange
+            symbol = fill.symbol
+            market_type = fill.market_type.value
+            side = fill.side.value
+            quantity = str(fill.quantity)
+            price = str(fill.price)
+            fee: str | None = str(fill.fee)
+            fee_asset = fill.fee_asset
+            ts = _to_iso(fill.ts)
+        else:
+            fill_id = fill.fill_id
+            order_id = fill.order_id
+            exchange = fill.exchange
+            symbol = fill.symbol
+            market_type = fill.market_type
+            side = fill.side
+            quantity = fill.quantity
+            price = fill.price
+            fee = fill.fee
+            fee_asset = fill.fee_asset
+            ts = fill.ts
         with self.database.connect() as connection:
             connection.execute(
                 """
@@ -126,25 +157,17 @@ class Repository:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    str(payload["fill_id"]),
-                    str(payload["order_id"]),
-                    str(payload["exchange"]),
-                    str(payload["symbol"]),
-                    (
-                        payload["market_type"].value
-                        if hasattr(payload.get("market_type"), "value")
-                        else payload.get("market_type")
-                    ),
-                    (
-                        payload["side"].value
-                        if hasattr(payload.get("side"), "value")
-                        else str(payload["side"])
-                    ),
-                    str(payload["quantity"]),
-                    str(payload["price"]),
-                    str(payload["fee"]) if payload.get("fee") is not None else None,
-                    payload.get("fee_asset"),
-                    str(payload["ts"]),
+                    fill_id,
+                    order_id,
+                    exchange,
+                    symbol,
+                    market_type,
+                    side,
+                    quantity,
+                    price,
+                    fee,
+                    fee_asset,
+                    ts,
                 ),
             )
 
@@ -156,11 +179,23 @@ class Repository:
         exchange: str,
         symbol: str,
         status: str,
-        payload: Mapping[str, Any] | None = None,
+        payload: Mapping[str, SerializableValue] | None = None,
         updated_at: datetime | None = None,
     ) -> None:
-        timestamp = _to_iso(updated_at or datetime.now(tz=timezone.utc))
-        body = json.dumps(payload or {}, sort_keys=True, default=str)
+        self.save_workflow_state_record(
+            StoredWorkflowStateRow(
+                workflow_id=workflow_id,
+                workflow_type=workflow_type,
+                exchange=exchange,
+                symbol=symbol,
+                status=status,
+                    payload={key: value for key, value in (payload or {}).items()},
+                    updated_at=_to_iso(updated_at or datetime.now(tz=timezone.utc)),
+                )
+            )
+
+    def save_workflow_state_record(self, record: StoredWorkflowStateRow) -> None:
+        body = json.dumps(record.payload, sort_keys=True, default=str)
         with self.database.connect() as connection:
             connection.execute(
                 """
@@ -168,7 +203,15 @@ class Repository:
                     workflow_id, workflow_type, exchange, symbol, status, payload, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (workflow_id, workflow_type, exchange, symbol, status, body, timestamp),
+                (
+                    record.workflow_id,
+                    record.workflow_type,
+                    record.exchange,
+                    record.symbol,
+                    record.status,
+                    body,
+                    record.updated_at,
+                ),
             )
 
     def save_order_status(self, order: Order) -> None:
@@ -190,26 +233,26 @@ class Repository:
                 ),
             )
 
-    def list_orders(self) -> list[dict[str, Any]]:
+    def list_orders(self) -> list[StoredOrderRow]:
         with self.database.connect() as connection:
             rows = connection.execute("SELECT * FROM orders ORDER BY ts DESC").fetchall()
-        return [dict(row) for row in rows]
+        return [StoredOrderRow.model_validate(dict(row)) for row in rows]
 
-    def list_positions(self) -> list[dict[str, Any]]:
+    def list_positions(self) -> list[StoredPositionRow]:
         with self.database.connect() as connection:
             rows = connection.execute("SELECT * FROM positions ORDER BY ts DESC").fetchall()
-        return [dict(row) for row in rows]
+        return [StoredPositionRow.model_validate(dict(row)) for row in rows]
 
-    def list_fills(self, *, order_id: str | None = None) -> list[dict[str, Any]]:
+    def list_fills(self, *, order_id: str | None = None) -> list[StoredFillRow]:
         query = "SELECT * FROM fills"
-        params: list[Any] = []
+        params: list[str] = []
         if order_id is not None:
             query += " WHERE order_id = ?"
             params.append(order_id)
         query += " ORDER BY ts DESC"
         with self.database.connect() as connection:
             rows = connection.execute(query, params).fetchall()
-        return [dict(row) for row in rows]
+        return [StoredFillRow.model_validate(dict(row)) for row in rows]
 
     def list_funding_history(
         self,
@@ -217,10 +260,10 @@ class Repository:
         exchange: str | None = None,
         symbol: str | None = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[StoredFundingSnapshotRow]:
         query = "SELECT * FROM funding_snapshots"
         clauses: list[str] = []
-        params: list[Any] = []
+        params: list[str | int] = []
         if exchange is not None:
             clauses.append("exchange = ?")
             params.append(exchange)
@@ -233,15 +276,15 @@ class Repository:
         params.append(limit)
         with self.database.connect() as connection:
             rows = connection.execute(query, params).fetchall()
-        return [dict(row) for row in rows]
+        return [StoredFundingSnapshotRow.model_validate(dict(row)) for row in rows]
 
     def list_workflow_states(
         self,
         *,
         statuses: tuple[str, ...] | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[StoredWorkflowStateRow]:
         query = "SELECT * FROM workflow_state"
-        params: list[Any] = []
+        params: list[str] = []
         if statuses:
             placeholders = ", ".join("?" for _ in statuses)
             query += f" WHERE status IN ({placeholders})"
@@ -252,9 +295,9 @@ class Repository:
         workflows = [dict(row) for row in rows]
         for workflow in workflows:
             workflow["payload"] = json.loads(workflow["payload"])
-        return workflows
+        return [StoredWorkflowStateRow.model_validate(workflow) for workflow in workflows]
 
-    def list_order_status_history(self, order_id: str) -> list[dict[str, Any]]:
+    def list_order_status_history(self, order_id: str) -> list[StoredOrderStatusRow]:
         with self.database.connect() as connection:
             rows = connection.execute(
                 """
@@ -264,7 +307,7 @@ class Repository:
                 """,
                 (order_id,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [StoredOrderStatusRow.model_validate(dict(row)) for row in rows]
 
     def to_decimal(self, value: str | None) -> Decimal | None:
         if value is None:

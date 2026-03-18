@@ -4,9 +4,19 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any
+from decimal import Decimal
 
-from arb.execution.private_event_hub import PrivateEventHub
+from arb.execution.private_event_hub import FillUpdatePayload, OrderUpdatePayload, PrivateEventHub
+from arb.execution.protocols import (
+    CancelOrderClient,
+    FetchFillsClient,
+    FetchOrderClient,
+    SleepFn,
+    TrackableOrderClient,
+    supports_cancel_order,
+    supports_fetch_fills,
+    supports_fetch_order,
+)
 from arb.models import Fill, MarketType, Order, OrderStatus
 from arb.models import Side
 
@@ -40,7 +50,7 @@ class OrderTracker:
         *,
         max_polls: int = 5,
         poll_interval: float = 0.05,
-        sleep: Any | None = None,
+        sleep: SleepFn | None = None,
         event_hub: PrivateEventHub | None = None,
     ) -> None:
         self.max_polls = max_polls
@@ -50,13 +60,13 @@ class OrderTracker:
 
     async def track_order(
         self,
-        client: Any,
+        client: TrackableOrderClient,
         order: Order,
         *,
         symbol: str,
         market_type: MarketType,
     ) -> OrderTrackResult:
-        if not hasattr(client, "fetch_order"):
+        if not supports_fetch_order(client):
             fills = await self._fetch_fills(client, order.order_id, symbol, market_type)
             return OrderTrackResult(initial_order=order, final_order=order, fills=fills)
 
@@ -71,7 +81,7 @@ class OrderTracker:
             await self._sleep(self.poll_interval)
 
         canceled = False
-        if hasattr(client, "cancel_order") and order.order_id is not None:
+        if supports_cancel_order(client) and order.order_id is not None:
             canceled_order = await client.cancel_order(str(order.order_id), symbol, market_type)
             if canceled_order is not None:
                 current = self._merge_cancel(current, canceled_order)
@@ -93,12 +103,12 @@ class OrderTracker:
 
     async def _fetch_fills(
         self,
-        client: Any,
+        client: TrackableOrderClient,
         order_id: str | None,
         symbol: str,
         market_type: MarketType,
     ) -> list[Fill]:
-        if order_id is None or not hasattr(client, "fetch_fills"):
+        if order_id is None or not supports_fetch_fills(client):
             return self._event_fills(order_id, symbol, market_type)
         fills = list(await client.fetch_fills(str(order_id), symbol, market_type))
         event_fills = self._event_fills(order_id, symbol, market_type)
@@ -114,7 +124,7 @@ class OrderTracker:
 
     async def _next_order_state(
         self,
-        client: Any,
+        client: FetchOrderClient,
         current: Order,
         symbol: str,
         market_type: MarketType,
@@ -147,7 +157,7 @@ class OrderTracker:
                     quantity=payload_decimal(payload.get("quantity", "0")),
                     price=payload_decimal(payload.get("price", "0")),
                     fee=payload_decimal(payload.get("fee", "0")),
-                    fee_asset=payload.get("fee_asset"),
+                    fee_asset=str(payload.get("fee_asset")) if payload.get("fee_asset") is not None else None,
                 )
             )
         return fills
@@ -155,7 +165,7 @@ class OrderTracker:
     def _order_from_event(
         self,
         current: Order,
-        payload: dict[str, Any],
+        payload: OrderUpdatePayload,
         market_type: MarketType,
     ) -> Order:
         return Order(
@@ -230,9 +240,7 @@ class OrderTracker:
         )
 
 
-def payload_decimal(value: Any) -> Any:
-    from decimal import Decimal
-
+def payload_decimal(value: object) -> Decimal:
     if isinstance(value, Decimal):
         return value
     return Decimal(str(value))

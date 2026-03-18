@@ -4,18 +4,29 @@
 
 ## 当前门禁范围
 
-当前 `mypy` 先收紧这些已经完成 Pydantic 化的边界模块：
+当前 `mypy` 已经覆盖这些完成建模/协议收口的主链模块：
 
-- `src/arb/schemas`
-- `src/arb/bootstrap/schemas.py`
-- `src/arb/control/schemas.py`
-- `src/arb/integrations/feishu/schemas.py`
+- `src/arb/backtest/{schemas,dataset_fetcher,loader,report,simulator}.py`
+- `src/arb/control/{api,deps,dispatcher,schemas,service_bridge}.py`
+- `src/arb/config/{__init__,live}.py`
+- `src/arb/execution/{protocols,executor,order_tracker}.py`
 - `src/arb/market/schemas.py`
 - `src/arb/net/schemas.py`
+- `src/arb/portfolio/reconciler.py`
+- `src/arb/risk/position_monitor.py`
+- `src/arb/runtime/{binance,okx,bybit,gate,bitget,htx}_runtime.py`
+- `src/arb/runtime/{realtime_scanner,funding_arb_service,cross_exchange_funding_service,pipeline}.py`
+- `src/arb/scanner/funding_scanner.py`
+- `src/arb/settings/{exchanges,strategies}.py`
+- `src/arb/storage/{repository,schemas}.py`
+- `src/arb/workflows/{open_position,close_position}.py`
+- `src/arb/schemas`
+- `src/arb/bootstrap/schemas.py`
+- `src/arb/integrations/feishu/schemas.py`
 - `src/arb/ws/schemas.py`
 - `tests/factories`
 
-这是第一阶段门禁，不是全仓库一次性 `strict`。原因很简单：主链边界必须先稳定，旧模块再逐步迁移。
+这仍然不是“全仓库一次性 strict”，但已经覆盖了本轮重构后的资金费率套利主链。
 
 ## 本地怎么跑
 
@@ -55,6 +66,7 @@ PYTHONPATH=src:. UV_CACHE_DIR=.uv-cache uv run pytest -q
 - 原始交易所 JSON 只能停留在适配器最外层
 - 进入系统主链前，必须转成 `ArbModel` / `ArbFrozenModel`
 - 测试里优先用工厂和显式模型，不要手搓松散嵌套字典
+- 协作者如果本质是“有一组方法要实现”，优先定义 `Protocol`
 
 ## 例外边界
 
@@ -63,6 +75,7 @@ PYTHONPATH=src:. UV_CACHE_DIR=.uv-cache uv run pytest -q
 - 第三方库原始返回值
 - 交易所私有协议里还没标准化完成的载荷
 - 兼容旧接口的过渡适配层
+- 内部缓存索引或临时聚合 map，例如 `dict[tuple[str, str], MarketSnapshot]`
 
 一旦这些值进入 service、scanner、control、bootstrap 主链，就必须收口成明确模型。
 

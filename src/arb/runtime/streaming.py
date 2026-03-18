@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Mapping
 
-from arb.net.ws import WebSocketSession
 from arb.market.schemas import NormalizedWsEvent
+from arb.net.ws import Connector, WebSocketSession
 from arb.runtime.snapshots import SnapshotService
+from arb.schemas.base import SerializableValue
 from arb.ws.base import BaseWebSocketClient
-
-Connector = Callable[[str], Awaitable[object]]
 
 
 class PublicStreamService:
@@ -63,10 +62,10 @@ class PrivateSessionService:
 
     async def run(
         self,
-        message: Mapping[str, object],
+        message: Mapping[str, SerializableValue],
         *,
         max_messages: int = 1,
-    ) -> list[object]:
+    ) -> list[SerializableValue]:
         session = WebSocketSession(
             self.endpoint,
             connector=self.ws_connector,

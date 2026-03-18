@@ -66,3 +66,8 @@ class CommandResponse(ArbFrozenModel):
     accepted: bool
     command_id: str
     status: str
+
+
+class CommandQueueSnapshot(ArbFrozenModel):
+    queued: list[str]
+    pending_confirmation: list[str]

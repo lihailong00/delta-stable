@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
 
 from arb.execution.guards import GuardContext, PreTradeGuards
-from arb.execution.order_tracker import OrderTracker
-from arb.models import Fill, MarketType, OrderStatus
+from arb.execution.order_tracker import OrderTrackResult, OrderTracker
+from arb.execution.protocols import CreateOrderClient, supports_cancel_order
+from arb.models import Fill, MarketType, Order, OrderStatus
 
 
 @dataclass(slots=True, frozen=True)
 class ExecutionLeg:
-    client: Any
+    client: CreateOrderClient
     symbol: str
     market_type: MarketType
     side: str
@@ -26,9 +26,9 @@ class ExecutionLeg:
 @dataclass(slots=True)
 class ExecutionResult:
     status: str
-    orders: list[Any] = field(default_factory=list)
+    orders: list[Order] = field(default_factory=list)
     fills: list[Fill] = field(default_factory=list)
-    adjustments: list[Any] = field(default_factory=list)
+    adjustments: list[Order] = field(default_factory=list)
     rollback_performed: bool = False
     reason: str = ""
 
@@ -94,8 +94,8 @@ class PairExecutor:
         self,
         first_leg: ExecutionLeg,
         second_leg: ExecutionLeg,
-        orders: list[Any],
-    ) -> list[Any]:
+        orders: list[Order],
+    ) -> list[Order]:
         if len(orders) != 2:
             return []
         first_filled = Decimal(str(getattr(orders[0], "filled_quantity", first_leg.quantity)))
@@ -114,7 +114,7 @@ class PairExecutor:
         )
         return [adjustment]
 
-    async def _submit(self, leg: ExecutionLeg) -> Any:
+    async def _submit(self, leg: ExecutionLeg) -> Order:
         return await leg.client.create_order(
             leg.symbol,
             leg.market_type,
@@ -124,9 +124,9 @@ class PairExecutor:
             reduce_only=leg.reduce_only,
         )
 
-    async def _rollback(self, leg: ExecutionLeg, order: Any) -> None:
+    async def _rollback(self, leg: ExecutionLeg, order: Order) -> None:
         order_id = getattr(order, "order_id", None)
-        if order_id:
+        if order_id and supports_cancel_order(leg.client):
             await leg.client.cancel_order(order_id, leg.symbol, leg.market_type)
 
     def _validate_leg(self, leg: ExecutionLeg) -> None:
@@ -139,6 +139,6 @@ class PairExecutor:
             context=leg.context,
         )
 
-    def _tracking_failed(self, first: Any, second: Any) -> bool:
+    def _tracking_failed(self, first: OrderTrackResult, second: OrderTrackResult) -> bool:
         tracks = (first, second)
         return any(track.timed_out and track.final_order.filled_quantity == 0 for track in tracks)

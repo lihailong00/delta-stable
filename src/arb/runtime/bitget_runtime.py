@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
 
 from arb.exchange.bitget import BitgetExchange
+from arb.market.schemas import MarketSnapshot, NormalizedWsEvent
 from arb.models import MarketType
 from arb.net.http import HttpTransport
+from arb.net.ws import Connector
 from arb.runtime.snapshots import SnapshotService
 from arb.runtime.streaming import PrivateSessionService, PublicStreamService
+from arb.schemas.base import SerializableValue
 from arb.ws.bitget import BitgetWebSocketClient
 
 
@@ -25,7 +28,7 @@ class BitgetRuntime:
         public_stream: PublicStreamService,
         private_session: PrivateSessionService,
         *,
-        ws_connector: Any,
+        ws_connector: Connector,
     ) -> None:
         self.exchange = exchange
         self.public_ws_client = public_ws_client
@@ -47,7 +50,7 @@ class BitgetRuntime:
         market_type: MarketType = MarketType.SPOT,
         product_type: str = "USDT-FUTURES",
         http_transport: HttpTransport,
-        ws_connector: Any,
+        ws_connector: Connector,
     ) -> "BitgetRuntime":
         exchange = BitgetExchange(
             api_key,
@@ -91,24 +94,29 @@ class BitgetRuntime:
         )
         return True
 
-    async def validate_private_access(self) -> dict[str, Any]:
+    async def validate_private_access(self) -> dict[str, str]:
         balances = await self.exchange.fetch_balances()
         return {key: str(value) for key, value in balances.items()}
 
-    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> dict[str, Any]:
+    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> MarketSnapshot:
         return await self.snapshot_service.fetch_public_snapshot(symbol, market_type)
 
-    def build_private_login_message(self, timestamp: str) -> dict[str, Any]:
+    def build_private_login_message(self, timestamp: str) -> Mapping[str, SerializableValue]:
         return dict(self.private_ws_client.build_login_message(timestamp))
 
-    async def stream_orderbook(self, symbol: str, *, max_messages: int = 1) -> list[dict[str, Any]]:
+    async def stream_orderbook(self, symbol: str, *, max_messages: int = 1) -> list[NormalizedWsEvent]:
         return await self.public_stream.stream("books", symbol=symbol, max_messages=max_messages)
 
-    async def stream_funding(self, symbol: str, *, max_messages: int = 1) -> list[dict[str, Any]]:
+    async def stream_funding(self, symbol: str, *, max_messages: int = 1) -> list[NormalizedWsEvent]:
         return await self.public_stream.stream("funding", symbol=symbol, max_messages=max_messages)
 
-    async def login_private_ws(self, timestamp: str, *, max_messages: int = 1) -> list[Any]:
+    async def login_private_ws(
+        self,
+        timestamp: str,
+        *,
+        max_messages: int = 1,
+    ) -> list[SerializableValue]:
         return await self.private_session.run(
-            self.private_ws_client.build_login_message(timestamp),
+            dict(self.private_ws_client.build_login_message(timestamp)),
             max_messages=max_messages,
         )
