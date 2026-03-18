@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 from arb.funding import DEFAULT_FUNDING_INTERVAL_HOURS
 
 DEFAULT_TIMEOUT = 20.0
+DEFAULT_EXCHANGE = "binance"
 CSV_FIELDNAMES = (
     "exchange",
     "symbol",
@@ -134,9 +135,10 @@ def merge_month_rows(
     funding_rows: Iterable[dict[str, str]],
     kline_rows: Iterable[dict[str, str]],
     *,
+    exchange: str = DEFAULT_EXCHANGE,
     interval_hours: int = DEFAULT_FUNDING_INTERVAL_HOURS,
 ) -> list[dict[str, str]]:
-    """按指定 funding 周期合并资金费率和 K 线数据。"""
+    """按指定交易所和 funding 周期合并资金费率与 K 线数据。"""
 
     funding_by_bucket: dict[int, tuple[str, int]] = {}
     # 先把资金费率按时间桶索引，便于后续快速关联。
@@ -155,7 +157,7 @@ def merge_month_rows(
         funding_rate, row_interval_hours = funding_point
         merged.append(
             {
-                "exchange": "binance",
+                "exchange": exchange,
                 "symbol": symbol.upper(),
                 "ts": datetime.fromtimestamp(bucket / 1000, tz=timezone.utc).isoformat(),
                 "price": str(row["close"]),
@@ -203,6 +205,8 @@ def write_dataset_csv(path: str | Path, rows: Iterable[dict[str, str]]) -> Path:
 class BinancePublicDataFetcher:
     """Download and align Binance funding rate and futures kline archives."""
 
+    exchange_name = DEFAULT_EXCHANGE
+
     def __init__(
         self,
         *,
@@ -245,6 +249,7 @@ class BinancePublicDataFetcher:
                     month,
                     funding_rows,
                     kline_rows,
+                    exchange=self.exchange_name,
                     interval_hours=interval_hours,
                 )
             )
