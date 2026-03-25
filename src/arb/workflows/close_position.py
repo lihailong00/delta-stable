@@ -119,6 +119,10 @@ class ClosePositionResult:
     retries: int = 0
     # 平仓前识别出的风控告警。
     alerts: list[RiskAlert] = field(default_factory=list)
+    # 现货腿剩余待平数量；完全平仓时为 0。
+    remaining_spot_quantity: Decimal = Decimal("0")
+    # 永续腿剩余待平数量；完全平仓时为 0。
+    remaining_perp_quantity: Decimal = Decimal("0")
 
 
 class ClosePositionWorkflow:
@@ -169,21 +173,22 @@ class ClosePositionWorkflow:
             perp_quantity=request.perp_quantity,
             reduce_only=request.reduce_only_only or self.kill_switch.requires_reduce_only(),
         )
+        remaining_spot = self._remaining_quantity(execution, 0, request.spot_quantity)
+        remaining_perp = self._remaining_quantity(execution, 1, request.perp_quantity)
         retries = 0
-        if self._is_success(execution):
+        if self._is_success(execution) and self._is_fully_closed(remaining_spot, remaining_perp):
             return ClosePositionResult(
-                # 紧急模式下即使完成退出，也用 reduced 表达“去风险式收缩”语义。
-                status="reduced" if urgent else "closed",
+                status="closed",
                 reason=reason,
                 route=route,
                 execution=execution,
                 retries=retries,
                 alerts=alerts,
+                remaining_spot_quantity=remaining_spot,
+                remaining_perp_quantity=remaining_perp,
             )
 
         # 首次尝试失败后，根据已成交情况计算剩余待平数量。
-        remaining_spot = self._remaining_quantity(execution, 0, request.spot_quantity)
-        remaining_perp = self._remaining_quantity(execution, 1, request.perp_quantity)
         while retries < request.max_retries and (remaining_spot > 0 or remaining_perp > 0):
             # 重试阶段一律按 urgent 模式处理，目标从“优雅退出”转为“尽快去风险”。
             route = self._route(request, urgent=True)
@@ -195,19 +200,34 @@ class ClosePositionWorkflow:
                 reduce_only=True,
             )
             retries += 1
-            if self._is_success(execution):
+            remaining_spot = self._remaining_quantity(execution, 0, remaining_spot)
+            remaining_perp = self._remaining_quantity(execution, 1, remaining_perp)
+            if self._is_success(execution) and self._is_fully_closed(remaining_spot, remaining_perp):
                 return ClosePositionResult(
-                    # 只要进入过重试，也统一记为 reduced，表示并非一次性正常平仓完成。
-                    status="reduced" if urgent or retries > 0 else "closed",
+                    status="closed",
                     reason=reason,
                     route=route,
                     execution=execution,
                     retries=retries,
                     alerts=alerts,
+                    remaining_spot_quantity=remaining_spot,
+                    remaining_perp_quantity=remaining_perp,
                 )
-            # 若本轮仍未成功，则继续根据执行结果缩小剩余待平数量。
-            remaining_spot = self._remaining_quantity(execution, 0, remaining_spot)
-            remaining_perp = self._remaining_quantity(execution, 1, remaining_perp)
+        if self._has_reduction(
+            request=request,
+            remaining_spot=remaining_spot,
+            remaining_perp=remaining_perp,
+        ):
+            return ClosePositionResult(
+                status="reduced",
+                reason=reason,
+                route=route,
+                execution=execution,
+                retries=retries,
+                alerts=alerts,
+                remaining_spot_quantity=remaining_spot,
+                remaining_perp_quantity=remaining_perp,
+            )
 
         return ClosePositionResult(
             status="failed",
@@ -216,6 +236,8 @@ class ClosePositionWorkflow:
             execution=execution,
             retries=retries,
             alerts=alerts,
+            remaining_spot_quantity=remaining_spot,
+            remaining_perp_quantity=remaining_perp,
         )
 
     async def execute_cross_exchange(self, request: CrossExchangeCloseRequest) -> ClosePositionResult:
@@ -362,9 +384,11 @@ class ClosePositionWorkflow:
                 market_type=leg.market_type,
             )
             status = "filled"
-            # 如果超时且完全没有成交，则按失败处理，交给上层决定是否重试。
+            # 如果超时且完全没有成交，则按失败处理；部分成交则标记为 partial，交给上层继续减仓。
             if tracked.timed_out and tracked.final_order.filled_quantity == 0:
                 status = "failed"
+            elif tracked.final_order.remaining_quantity > 0:
+                status = "partial"
             return ExecutionResult(
                 status=status,
                 orders=[tracked.final_order],
@@ -428,10 +452,29 @@ class ClosePositionWorkflow:
         `index` 对应订单列表里的腿顺序；若该腿没有返回订单，则保守地沿用默认数量。
         """
 
+        if execution.status == "adjusted":
+            # 已经提交过补单时，当前工作流把该腿视为已交给调整单收口，不再继续重复下相同数量。
+            return Decimal("0")
         if len(execution.orders) <= index:
             return default
         order = execution.orders[index]
         return max(Decimal(str(order.quantity)) - Decimal(str(order.filled_quantity)), Decimal("0"))
+
+    def _has_reduction(
+        self,
+        *,
+        request: ClosePositionRequest,
+        remaining_spot: Decimal,
+        remaining_perp: Decimal,
+    ) -> bool:
+        """判断本次平仓是否至少缩小了部分风险敞口。"""
+
+        return remaining_spot < request.spot_quantity or remaining_perp < request.perp_quantity
+
+    def _is_fully_closed(self, remaining_spot: Decimal, remaining_perp: Decimal) -> bool:
+        """判断现货腿和永续腿是否都已经完全退出。"""
+
+        return remaining_spot <= 0 and remaining_perp <= 0
 
     def _is_success(self, execution: ExecutionResult) -> bool:
         """判断本次执行是否可视为成功结束。"""

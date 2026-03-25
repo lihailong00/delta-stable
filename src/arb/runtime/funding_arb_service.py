@@ -127,10 +127,22 @@ class FundingArbService:
                     alerts=monitor_decision.alerts,
                 )
                 closed.append(close_result)
-                # 只有真正关闭或减仓成功后，才释放占用的槽位并移出活跃集合。
-                if close_result.status in {"closed", "reduced"}:
+                # 完全平仓后才释放槽位并移出活跃集合；部分减仓则继续保留在监控列表里。
+                if close_result.status == "closed":
                     del self.active_positions[key]
                     self.manager.release_slot(key)
+                    self._monitor_state_signatures.pop(position.workflow_id, None)
+                elif close_result.status == "reduced":
+                    self.active_positions[key] = position.model_copy(
+                        update={
+                            "quantity": max(
+                                close_result.remaining_spot_quantity,
+                                close_result.remaining_perp_quantity,
+                            ),
+                            "spot_quantity": close_result.remaining_spot_quantity,
+                            "perp_quantity": close_result.remaining_perp_quantity,
+                        }
+                    )
                     self._monitor_state_signatures.pop(position.workflow_id, None)
                 continue
             self._record_monitor_state(position, monitor_decision)
@@ -157,9 +169,21 @@ class FundingArbService:
                 continue
             close_result = await self._close_position(position, snapshot, reason=decision.reason)
             closed.append(close_result)
-            if close_result.status in {"closed", "reduced"}:
+            if close_result.status == "closed":
                 del self.active_positions[key]
                 self.manager.release_slot(key)
+                self._monitor_state_signatures.pop(position.workflow_id, None)
+            elif close_result.status == "reduced":
+                self.active_positions[key] = position.model_copy(
+                    update={
+                        "quantity": max(
+                            close_result.remaining_spot_quantity,
+                            close_result.remaining_perp_quantity,
+                        ),
+                        "spot_quantity": close_result.remaining_spot_quantity,
+                        "perp_quantity": close_result.remaining_perp_quantity,
+                    }
+                )
                 self._monitor_state_signatures.pop(position.workflow_id, None)
 
         # 第二阶段：从扫描机会中选出本轮允许尝试的新机会。
@@ -272,10 +296,10 @@ class FundingArbService:
             self._persist_position_pair(
                 exchange=opportunity.exchange,
                 symbol=opportunity.symbol,
-                quantity=self.position_quantity,
+                spot_quantity=self.position_quantity,
+                perp_quantity=self.position_quantity,
                 spot_entry=snapshot.ticker.ask,
                 perp_entry=snapshot.ticker.bid,
-                closed=False,
             )
         return result
 
@@ -332,28 +356,44 @@ class FundingArbService:
                 max_slippage_bps=Decimal("10"),
             )
         )
-        closed_payload: dict[str, SerializableValue] = {"reason": result.reason, "retries": result.retries}
+        closed_payload: dict[str, SerializableValue] = {
+            "reason": result.reason,
+            "retries": result.retries,
+            "remaining_spot_quantity": str(result.remaining_spot_quantity),
+            "remaining_perp_quantity": str(result.remaining_perp_quantity),
+        }
         if alerts is not None:
             closed_payload.update(self._monitor_alert_payload(alerts))
-        # 将平仓结果写回 pipeline，closed / reduced 都视为已经退出或显著收缩。
+        # 将平仓结果按真实状态写回 pipeline，避免把 reduced 误报成 closed。
         self.pipeline.record_workflow_state(
             workflow_id=position.workflow_id,
             workflow_type=self.strategy_name,
             exchange=position.exchange,
             symbol=position.symbol,
-            status="closed" if result.status in {"closed", "reduced"} else result.status,
+            status=result.status,
             payload=closed_payload,
         )
-        if result.execution is not None and result.status in {"closed", "reduced"}:
-            # 平仓成功后，同时记录实际执行和“数量归零”的持仓快照。
+        if result.execution is not None and result.status == "closed":
+            # 完全平仓后，同时记录实际执行和“数量归零”的持仓快照。
             self._persist_execution(result.execution)
             self._persist_position_pair(
                 exchange=position.exchange,
                 symbol=position.symbol,
-                quantity=max(position.spot_quantity, position.perp_quantity),
+                spot_quantity=Decimal("0"),
+                perp_quantity=Decimal("0"),
                 spot_entry=snapshot.ticker.bid,
                 perp_entry=snapshot.ticker.ask,
-                closed=True,
+            )
+        elif result.execution is not None and result.status == "reduced":
+            # 部分减仓时保留剩余数量，后续 run_once 会继续监控残余风险。
+            self._persist_execution(result.execution)
+            self._persist_position_pair(
+                exchange=position.exchange,
+                symbol=position.symbol,
+                spot_quantity=result.remaining_spot_quantity,
+                perp_quantity=result.remaining_perp_quantity,
+                spot_entry=snapshot.ticker.bid,
+                perp_entry=snapshot.ticker.ask,
             )
         return result
 
@@ -471,17 +511,16 @@ class FundingArbService:
         *,
         exchange: str,
         symbol: str,
-        quantity: Decimal,
+        spot_quantity: Decimal,
+        perp_quantity: Decimal,
         spot_entry: Decimal,
         perp_entry: Decimal,
-        closed: bool,
     ) -> None:
         """把一组现货/合约对冲仓位快照写入 pipeline。
 
-        开仓时记录实际数量，平仓时通过把数量写成 0，表达该对冲对已经结束。
+        这里按两条腿分别记录数量，避免部分减仓后把剩余风险误写成完全归零。
         """
 
-        active_quantity = Decimal("0") if closed else quantity
         # 资金费率套利的现货腿固定记为做多。
         self.pipeline.record_position(
             Position(
@@ -489,7 +528,7 @@ class FundingArbService:
                 symbol=symbol,
                 market_type=MarketType.SPOT,
                 direction=PositionDirection.LONG,
-                quantity=active_quantity,
+                quantity=spot_quantity,
                 entry_price=spot_entry,
                 mark_price=spot_entry,
             )
@@ -501,7 +540,7 @@ class FundingArbService:
                 symbol=symbol,
                 market_type=MarketType.PERPETUAL,
                 direction=PositionDirection.SHORT,
-                quantity=active_quantity,
+                quantity=perp_quantity,
                 entry_price=perp_entry,
                 mark_price=perp_entry,
             )

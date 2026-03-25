@@ -87,7 +87,7 @@ class PairExecutor:
         elif all(order.status is OrderStatus.FILLED or order.filled_quantity >= order.quantity for order in result.orders):
             result.status = "filled"
         else:
-            result.status = "filled"
+            result.status = "partial"
         return result
 
     async def reconcile_partial_fill(

@@ -126,3 +126,23 @@ class TestPairExecutor:
         assert result.status == 'adjusted'
         assert result.orders[1].filled_quantity == Decimal('0.6')
         assert result.adjustments[0].order_id == 'b2'
+
+    async def test_equal_partial_fill_returns_partial_status(self) -> None:
+        client_a = _TrackingClient(
+            orders=[Order(exchange='binance', symbol='BTC/USDT', market_type=MarketType.SPOT, side=Side.BUY, quantity=Decimal('1'), price=Decimal('100'), status=OrderStatus.NEW, order_id='a1')],
+            fetched_orders=[Order(exchange='binance', symbol='BTC/USDT', market_type=MarketType.SPOT, side=Side.BUY, quantity=Decimal('1'), price=Decimal('100'), status=OrderStatus.PARTIALLY_FILLED, order_id='a1', filled_quantity=Decimal('0.1'))],
+        )
+        client_b = _TrackingClient(
+            orders=[Order(exchange='binance', symbol='BTC/USDT', market_type=MarketType.PERPETUAL, side=Side.SELL, quantity=Decimal('1'), price=Decimal('100'), status=OrderStatus.NEW, order_id='b1')],
+            fetched_orders=[Order(exchange='binance', symbol='BTC/USDT', market_type=MarketType.PERPETUAL, side=Side.SELL, quantity=Decimal('1'), price=Decimal('100'), status=OrderStatus.PARTIALLY_FILLED, order_id='b1', filled_quantity=Decimal('0.1'))],
+        )
+        context = GuardContext(available_balance=Decimal('1000'), max_notional=Decimal('1000'), supported_symbols={'BTC/USDT'})
+        executor = PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=lambda _: None))
+
+        result = await executor.execute_pair(
+            ExecutionLeg(client_a, 'BTC/USDT', MarketType.SPOT, 'buy', Decimal('1'), Decimal('100'), context=context),
+            ExecutionLeg(client_b, 'BTC/USDT', MarketType.PERPETUAL, 'sell', Decimal('1'), Decimal('100'), context=context),
+        )
+
+        assert result.status == 'partial'
+        assert result.adjustments == []

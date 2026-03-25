@@ -410,6 +410,56 @@ class TestFundingArbService:
             "alerts": [],
         }
 
+    async def test_service_keeps_partially_reduced_position_active(self) -> None:
+        spot_client = _Client(
+            orders=[_order(exchange="binance", symbol="BTC/USDT", market_type=MarketType.SPOT, side=Side.SELL, order_id="spot-close", status=OrderStatus.NEW, filled_quantity="0")],
+            fetched_orders=[_order(exchange="binance", symbol="BTC/USDT", market_type=MarketType.SPOT, side=Side.SELL, order_id="spot-close", status=OrderStatus.PARTIALLY_FILLED, filled_quantity="0.1")],
+        )
+        perp_client = _Client(
+            orders=[_order(exchange="binance", symbol="BTC/USDT", market_type=MarketType.PERPETUAL, side=Side.BUY, order_id="perp-close", status=OrderStatus.NEW, filled_quantity="0", reduce_only=True)],
+            fetched_orders=[_order(exchange="binance", symbol="BTC/USDT", market_type=MarketType.PERPETUAL, side=Side.BUY, order_id="perp-close", status=OrderStatus.PARTIALLY_FILLED, filled_quantity="0.1", reduce_only=True)],
+        )
+        scanner = _SequenceScanner(
+            [
+                {
+                    "snapshots": [build_market_snapshot("binance", "BTC/USDT", rate="-0.0001")],
+                    "opportunities": [],
+                    "output": [],
+                }
+            ]
+        )
+        repository = _MemoryRepository()
+        service = FundingArbService(
+            scanner=scanner,
+            open_workflow=OpenPositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
+            close_workflow=ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
+            venues={"binance": VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
+            manager=LiveExchangeManager({}),
+            pipeline=OpportunityPipeline(repository=repository),
+        )
+        workflow_id = "funding_spot_perp:binance:BTC/USDT"
+        service.active_positions[workflow_id] = ActiveFundingArb(
+            workflow_id=workflow_id,
+            exchange="binance",
+            symbol="BTC/USDT",
+            quantity=Decimal("1"),
+            spot_quantity=Decimal("1"),
+            perp_quantity=Decimal("1"),
+            opened_at=datetime.now(tz=timezone.utc),
+        )
+
+        result = await service.run_once([ScanTarget("binance", "BTC/USDT", MarketType.PERPETUAL)])
+
+        assert len(result["closed"]) == 1
+        assert result["closed"][0].status == "reduced"
+        assert workflow_id in service.active_positions
+        assert service.active_positions[workflow_id].spot_quantity == Decimal("0.9")
+        assert service.active_positions[workflow_id].perp_quantity == Decimal("0.9")
+        assert [item["status"] for item in repository.workflow_states] == ["closing", "reduced"]
+        assert repository.workflow_states[-1]["payload"]["remaining_spot_quantity"] == "0.9"
+        assert repository.workflow_states[-1]["payload"]["remaining_perp_quantity"] == "0.9"
+        assert len(repository.positions) == 2
+
     async def test_service_uses_strategy_threshold_interval_for_open_decisions(self) -> None:
         spot_client = _Client(
             orders=[_order(exchange="binance", symbol="BTC/USDT", market_type=MarketType.SPOT, side=Side.BUY, order_id="spot-open", status=OrderStatus.FILLED)],

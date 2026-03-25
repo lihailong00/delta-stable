@@ -180,7 +180,7 @@ class TestClosePositionWorkflow:
 
         result = await workflow.execute(_request(venue=venue, funding_rate=Decimal("0.0001")))
 
-        assert result.status == "reduced"
+        assert result.status == "closed"
         assert result.route is not None
         assert result.route.mode == "taker"
         assert perp_client.submitted[0]["reduce_only"] is True
@@ -211,6 +211,24 @@ class TestClosePositionWorkflow:
 
         result = await workflow.execute(_request(venue=venue, max_retries=1))
 
-        assert result.status == "reduced"
+        assert result.status == "closed"
         assert result.retries == 1
         assert spot_client.submitted[1]["price"] < spot_client.submitted[0]["price"]
+
+    async def test_close_workflow_returns_reduced_when_partial_close_remains(self) -> None:
+        spot_client = _Client(
+            orders=[_order(exchange="binance", market_type=MarketType.SPOT, side=Side.SELL, quantity="1", price="100", order_id="spot-close", status=OrderStatus.NEW, filled_quantity="0")],
+            fetched_orders=[_order(exchange="binance", market_type=MarketType.SPOT, side=Side.SELL, quantity="1", price="100", order_id="spot-close", status=OrderStatus.PARTIALLY_FILLED, filled_quantity="0.1")],
+        )
+        perp_client = _Client(
+            orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.BUY, quantity="1", price="100.2", order_id="perp-close", status=OrderStatus.NEW, filled_quantity="0", reduce_only=True)],
+            fetched_orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.BUY, quantity="1", price="100.2", order_id="perp-close", status=OrderStatus.PARTIALLY_FILLED, filled_quantity="0.1", reduce_only=True)],
+        )
+        venue = VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)
+        workflow = ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep)))
+
+        result = await workflow.execute(_request(venue=venue, max_retries=0))
+
+        assert result.status == "reduced"
+        assert result.remaining_spot_quantity == Decimal("0.9")
+        assert result.remaining_perp_quantity == Decimal("0.9")
