@@ -5,40 +5,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from arb.exchange.bybit import BybitExchange
-from arb.market.schemas import MarketSnapshot, NormalizedWsEvent
+from arb.market.schemas import NormalizedWsEvent
 from arb.models import MarketType
 from arb.net.http import HttpTransport
 from arb.net.ws import Connector
-from arb.runtime.snapshots import SnapshotService
-from arb.runtime.streaming import PrivateSessionService, PublicStreamService
+from arb.runtime.base_runtime import PrivateExchangeRuntime, build_private_runtime_services
 from arb.schemas.base import SerializableValue
 from arb.ws.bybit import BybitWebSocketClient
 
 
-class BybitRuntime:
+class BybitRuntime(PrivateExchangeRuntime):
     """Wire Bybit REST and WS adapters to live transports."""
-
-    def __init__(
-        self,
-        exchange: BybitExchange,
-        public_ws_client: BybitWebSocketClient,
-        private_ws_client: BybitWebSocketClient,
-        http_transport: HttpTransport,
-        snapshot_service: SnapshotService,
-        public_stream: PublicStreamService,
-        private_session: PrivateSessionService,
-        *,
-        ws_connector: Connector,
-    ) -> None:
-        self.exchange = exchange
-        self.public_ws_client = public_ws_client
-        self.private_ws_client = private_ws_client
-        self.http_transport = http_transport
-        self.snapshot_service = snapshot_service
-        self.public_stream = public_stream
-        self.private_session = private_session
-        self.ws_connector = ws_connector
-        self.collector = snapshot_service.collector
 
     @classmethod
     def build(
@@ -64,14 +41,11 @@ class BybitRuntime:
             api_secret=api_secret,
             private=True,
         )
-        snapshot_service = SnapshotService("bybit", exchange)
-        public_stream = PublicStreamService(
-            public_ws_client,
-            snapshot_service,
-            ws_connector=ws_connector,
-        )
-        private_session = PrivateSessionService(
-            private_ws_client.endpoint,
+        snapshot_service, public_stream, private_session = build_private_runtime_services(
+            exchange_name="bybit",
+            exchange=exchange,
+            public_ws_client=public_ws_client,
+            private_ws_client=private_ws_client,
             ws_connector=ws_connector,
         )
         return cls(
@@ -86,26 +60,16 @@ class BybitRuntime:
         )
 
     async def public_ping(self) -> bool:
-        await self.http_transport.request(
-            {"method": "GET", "url": f"{self.exchange.base_url}/v5/market/time"}
-        )
-        return True
-
-    async def validate_private_access(self) -> dict[str, str]:
-        balances = await self.exchange.fetch_balances()
-        return {key: str(value) for key, value in balances.items()}
-
-    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> MarketSnapshot:
-        return await self.snapshot_service.fetch_public_snapshot(symbol, market_type)
+        return await self._ping(f"{self.exchange.base_url}/v5/market/time")
 
     def build_private_auth_message(self, expires: int) -> Mapping[str, SerializableValue]:
         return dict(self.private_ws_client.build_auth_message(expires))
 
     async def stream_orderbook(self, symbol: str, *, max_messages: int = 1) -> list[NormalizedWsEvent]:
-        return await self.public_stream.stream("orderbook", symbol=symbol, max_messages=max_messages)
+        return await self.stream_public_channel("orderbook", symbol=symbol, max_messages=max_messages)
 
     async def stream_ticker(self, symbol: str, *, max_messages: int = 1) -> list[NormalizedWsEvent]:
-        return await self.public_stream.stream("ticker", symbol=symbol, max_messages=max_messages)
+        return await self.stream_public_channel("ticker", symbol=symbol, max_messages=max_messages)
 
     async def auth_private_ws(
         self,
@@ -113,7 +77,7 @@ class BybitRuntime:
         *,
         max_messages: int = 1,
     ) -> list[SerializableValue]:
-        return await self.private_session.run(
-            dict(self.private_ws_client.build_auth_message(expires)),
+        return await self.run_private_session(
+            self.private_ws_client.build_auth_message(expires),
             max_messages=max_messages,
         )

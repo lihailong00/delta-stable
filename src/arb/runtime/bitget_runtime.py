@@ -5,40 +5,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from arb.exchange.bitget import BitgetExchange
-from arb.market.schemas import MarketSnapshot, NormalizedWsEvent
+from arb.market.schemas import NormalizedWsEvent
 from arb.models import MarketType
 from arb.net.http import HttpTransport
 from arb.net.ws import Connector
-from arb.runtime.snapshots import SnapshotService
-from arb.runtime.streaming import PrivateSessionService, PublicStreamService
+from arb.runtime.base_runtime import PrivateExchangeRuntime, build_private_runtime_services
 from arb.schemas.base import SerializableValue
 from arb.ws.bitget import BitgetWebSocketClient
 
 
-class BitgetRuntime:
+class BitgetRuntime(PrivateExchangeRuntime):
     """Wire Bitget REST and WS adapters to live transports."""
-
-    def __init__(
-        self,
-        exchange: BitgetExchange,
-        public_ws_client: BitgetWebSocketClient,
-        private_ws_client: BitgetWebSocketClient,
-        http_transport: HttpTransport,
-        snapshot_service: SnapshotService,
-        public_stream: PublicStreamService,
-        private_session: PrivateSessionService,
-        *,
-        ws_connector: Connector,
-    ) -> None:
-        self.exchange = exchange
-        self.public_ws_client = public_ws_client
-        self.private_ws_client = private_ws_client
-        self.http_transport = http_transport
-        self.snapshot_service = snapshot_service
-        self.public_stream = public_stream
-        self.private_session = private_session
-        self.ws_connector = ws_connector
-        self.collector = snapshot_service.collector
 
     @classmethod
     def build(
@@ -67,14 +44,11 @@ class BitgetRuntime:
             passphrase=passphrase,
             private=True,
         )
-        snapshot_service = SnapshotService("bitget", exchange)
-        public_stream = PublicStreamService(
-            public_ws_client,
-            snapshot_service,
-            ws_connector=ws_connector,
-        )
-        private_session = PrivateSessionService(
-            private_ws_client.endpoint,
+        snapshot_service, public_stream, private_session = build_private_runtime_services(
+            exchange_name="bitget",
+            exchange=exchange,
+            public_ws_client=public_ws_client,
+            private_ws_client=private_ws_client,
             ws_connector=ws_connector,
         )
         return cls(
@@ -89,26 +63,16 @@ class BitgetRuntime:
         )
 
     async def public_ping(self) -> bool:
-        await self.http_transport.request(
-            {"method": "GET", "url": f"{self.exchange.base_url}/api/v2/public/time"}
-        )
-        return True
-
-    async def validate_private_access(self) -> dict[str, str]:
-        balances = await self.exchange.fetch_balances()
-        return {key: str(value) for key, value in balances.items()}
-
-    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> MarketSnapshot:
-        return await self.snapshot_service.fetch_public_snapshot(symbol, market_type)
+        return await self._ping(f"{self.exchange.base_url}/api/v2/public/time")
 
     def build_private_login_message(self, timestamp: str) -> Mapping[str, SerializableValue]:
         return dict(self.private_ws_client.build_login_message(timestamp))
 
     async def stream_orderbook(self, symbol: str, *, max_messages: int = 1) -> list[NormalizedWsEvent]:
-        return await self.public_stream.stream("books", symbol=symbol, max_messages=max_messages)
+        return await self.stream_public_channel("books", symbol=symbol, max_messages=max_messages)
 
     async def stream_funding(self, symbol: str, *, max_messages: int = 1) -> list[NormalizedWsEvent]:
-        return await self.public_stream.stream("funding", symbol=symbol, max_messages=max_messages)
+        return await self.stream_public_channel("funding", symbol=symbol, max_messages=max_messages)
 
     async def login_private_ws(
         self,
@@ -116,7 +80,7 @@ class BitgetRuntime:
         *,
         max_messages: int = 1,
     ) -> list[SerializableValue]:
-        return await self.private_session.run(
-            dict(self.private_ws_client.build_login_message(timestamp)),
+        return await self.run_private_session(
+            self.private_ws_client.build_login_message(timestamp),
             max_messages=max_messages,
         )

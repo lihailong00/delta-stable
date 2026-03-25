@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Callable, Mapping
+from typing import cast
 
 from arb.config.live import LiveRuntimeConfig
 from arb.models import MarketType
 from arb.net.http import HttpTransport
 from arb.net.ws import Connector
 from arb.runtime import BinanceRuntime, BitgetRuntime, BybitRuntime, GateRuntime, HtxRuntime, OkxRuntime
-from arb.settings.exchanges import ExchangeAccountConfig, ExchangeEndpointConfig, ExchangeSettings
+from arb.settings.exchanges import ExchangeAccountConfig, ExchangeSettings
 
 type BuiltRuntime = BinanceRuntime | OkxRuntime | BybitRuntime | GateRuntime | BitgetRuntime | HtxRuntime
 
@@ -25,8 +26,34 @@ class RuntimeEndpointSelection:
     ws_private_url: str | None = None
 
 
+@dataclass(slots=True, frozen=True)
+class RuntimeBuildContext:
+    exchange: str
+    account: ExchangeAccountConfig
+    market_type: MarketType
+    api_key: str
+    api_secret: str
+    http_transport: HttpTransport
+    ws_connector: Connector | None
+
+
+@dataclass(slots=True, frozen=True)
+class RuntimeSpec:
+    builder_method: str
+    endpoint_method: str
+
+
 class LiveRuntimeFactory:
     """Centralize live/testnet runtime assembly for supported exchanges."""
+
+    _RUNTIME_SPECS: dict[str, RuntimeSpec] = {
+        "binance": RuntimeSpec("_build_binance_runtime", "_apply_binance_endpoints"),
+        "okx": RuntimeSpec("_build_okx_runtime", "_apply_standard_endpoints"),
+        "bybit": RuntimeSpec("_build_bybit_runtime", "_apply_standard_endpoints"),
+        "gate": RuntimeSpec("_build_gate_runtime", "_apply_standard_endpoints"),
+        "bitget": RuntimeSpec("_build_bitget_runtime", "_apply_standard_endpoints"),
+        "htx": RuntimeSpec("_build_htx_runtime", "_apply_htx_endpoints"),
+    }
 
     def __init__(
         self,
@@ -59,66 +86,11 @@ class LiveRuntimeFactory:
         config = account or self.settings.exchanges[exchange]
         if not config.enabled:
             raise ValueError(f"exchange {exchange} is disabled")
+        spec = self._runtime_spec(exchange)
         selection = self._resolve_endpoints(config)
-        api_key = self._read_required_env(config.api_key_env, exchange, "api_key")
-        api_secret = self._read_required_env(config.api_secret_env, exchange, "api_secret")
-        http_transport = self.http_transport_factory(exchange)
-        ws_connector = self.ws_connector_factory(exchange)
-
-        if exchange == "binance":
-            runtime = BinanceRuntime.build(
-                api_key=api_key,
-                api_secret=api_secret,
-                market_type=market_type,
-                http_transport=http_transport,
-                ws_connector=ws_connector,
-            )
-        elif exchange == "okx":
-            runtime = OkxRuntime.build(
-                api_key=api_key,
-                api_secret=api_secret,
-                passphrase=self._read_required_env(config.passphrase_env, exchange, "passphrase"),
-                market_type=market_type,
-                http_transport=http_transport,
-                ws_connector=ws_connector,
-            )
-        elif exchange == "bybit":
-            runtime = BybitRuntime.build(
-                api_key=api_key,
-                api_secret=api_secret,
-                market_type=market_type,
-                recv_window=config.recv_window,
-                http_transport=http_transport,
-                ws_connector=ws_connector,
-            )
-        elif exchange == "gate":
-            runtime = GateRuntime.build(
-                api_key=api_key,
-                api_secret=api_secret,
-                http_transport=http_transport,
-                ws_connector=ws_connector,
-            )
-        elif exchange == "bitget":
-            runtime = BitgetRuntime.build(
-                api_key=api_key,
-                api_secret=api_secret,
-                passphrase=self._read_required_env(config.passphrase_env, exchange, "passphrase"),
-                market_type=market_type,
-                http_transport=http_transport,
-                ws_connector=ws_connector,
-            )
-        elif exchange == "htx":
-            runtime = HtxRuntime.build(
-                api_key=api_key,
-                api_secret=api_secret,
-                market_type=market_type,
-                http_transport=http_transport,
-                ws_connector=ws_connector,
-            )
-        else:
-            raise ValueError(f"unsupported exchange runtime: {exchange}")
-
-        self._apply_endpoints(runtime, exchange=exchange, selection=selection, market_type=market_type)
+        context = self._build_context(exchange, config, market_type=market_type)
+        runtime = cast(BuiltRuntime, getattr(self, spec.builder_method)(context))
+        getattr(self, spec.endpoint_method)(runtime, selection=selection, market_type=market_type)
         return runtime
 
     def _resolve_endpoints(self, account: ExchangeAccountConfig) -> RuntimeEndpointSelection:
@@ -140,28 +112,118 @@ class LiveRuntimeFactory:
             raise ValueError(f"exchange {exchange} missing env value for {env_name}")
         return value
 
-    def _apply_endpoints(
+    def _runtime_spec(self, exchange: str) -> RuntimeSpec:
+        spec = self._RUNTIME_SPECS.get(exchange)
+        if spec is None:
+            raise ValueError(f"unsupported exchange runtime: {exchange}")
+        return spec
+
+    def _build_context(
         self,
-        runtime: BuiltRuntime,
-        *,
         exchange: str,
+        account: ExchangeAccountConfig,
+        *,
+        market_type: MarketType,
+    ) -> RuntimeBuildContext:
+        return RuntimeBuildContext(
+            exchange=exchange,
+            account=account,
+            market_type=market_type,
+            api_key=self._read_required_env(account.api_key_env, exchange, "api_key"),
+            api_secret=self._read_required_env(account.api_secret_env, exchange, "api_secret"),
+            http_transport=self.http_transport_factory(exchange),
+            ws_connector=self.ws_connector_factory(exchange),
+        )
+
+    def _build_binance_runtime(self, context: RuntimeBuildContext) -> BinanceRuntime:
+        return BinanceRuntime.build(
+            api_key=context.api_key,
+            api_secret=context.api_secret,
+            market_type=context.market_type,
+            http_transport=context.http_transport,
+            ws_connector=context.ws_connector,
+        )
+
+    def _build_okx_runtime(self, context: RuntimeBuildContext) -> OkxRuntime:
+        return OkxRuntime.build(
+            api_key=context.api_key,
+            api_secret=context.api_secret,
+            passphrase=self._read_required_env(context.account.passphrase_env, context.exchange, "passphrase"),
+            market_type=context.market_type,
+            http_transport=context.http_transport,
+            ws_connector=context.ws_connector,
+        )
+
+    def _build_bybit_runtime(self, context: RuntimeBuildContext) -> BybitRuntime:
+        return BybitRuntime.build(
+            api_key=context.api_key,
+            api_secret=context.api_secret,
+            market_type=context.market_type,
+            recv_window=context.account.recv_window,
+            http_transport=context.http_transport,
+            ws_connector=context.ws_connector,
+        )
+
+    def _build_gate_runtime(self, context: RuntimeBuildContext) -> GateRuntime:
+        return GateRuntime.build(
+            api_key=context.api_key,
+            api_secret=context.api_secret,
+            http_transport=context.http_transport,
+            ws_connector=context.ws_connector,
+        )
+
+    def _build_bitget_runtime(self, context: RuntimeBuildContext) -> BitgetRuntime:
+        return BitgetRuntime.build(
+            api_key=context.api_key,
+            api_secret=context.api_secret,
+            passphrase=self._read_required_env(context.account.passphrase_env, context.exchange, "passphrase"),
+            market_type=context.market_type,
+            http_transport=context.http_transport,
+            ws_connector=context.ws_connector,
+        )
+
+    def _build_htx_runtime(self, context: RuntimeBuildContext) -> HtxRuntime:
+        return HtxRuntime.build(
+            api_key=context.api_key,
+            api_secret=context.api_secret,
+            market_type=context.market_type,
+            http_transport=context.http_transport,
+            ws_connector=context.ws_connector,
+        )
+
+    def _apply_binance_endpoints(
+        self,
+        runtime: BinanceRuntime,
+        *,
         selection: RuntimeEndpointSelection,
         market_type: MarketType,
     ) -> None:
-        if exchange == "binance":
-            if market_type is MarketType.SPOT:
-                runtime.exchange.spot_base_url = selection.rest_base_url
-            else:
-                runtime.exchange.futures_base_url = selection.rest_base_url
-            runtime.ws_client.endpoint = selection.ws_public_url
-            return
-
-        if exchange == "htx":
+        if market_type is MarketType.SPOT:
             runtime.exchange.spot_base_url = selection.rest_base_url
-            runtime.exchange.swap_base_url = selection.rest_base_url
-            runtime.ws_client.endpoint = selection.ws_public_url
-            return
+        else:
+            runtime.exchange.futures_base_url = selection.rest_base_url
+        runtime.ws_client.endpoint = selection.ws_public_url
 
+    def _apply_htx_endpoints(
+        self,
+        runtime: HtxRuntime,
+        *,
+        selection: RuntimeEndpointSelection,
+        market_type: MarketType,
+    ) -> None:
+        del market_type
+        runtime.exchange.spot_base_url = selection.rest_base_url
+        runtime.exchange.swap_base_url = selection.rest_base_url
+        runtime.ws_client.endpoint = selection.ws_public_url
+
+    def _apply_standard_endpoints(
+        self,
+        runtime: OkxRuntime | BybitRuntime | GateRuntime | BitgetRuntime,
+        *,
+        selection: RuntimeEndpointSelection,
+        market_type: MarketType,
+    ) -> None:
+        del market_type
         runtime.exchange.base_url = selection.rest_base_url
         if hasattr(runtime, "ws_client"):
             runtime.ws_client.endpoint = selection.ws_public_url

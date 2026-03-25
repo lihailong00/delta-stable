@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from decimal import Decimal
+from urllib.parse import urlencode
 
 from arb.models import Fill, FundingRate, MarketType, Order, OrderBook, Position, Ticker
 from arb.net.schemas import HttpRequest
+from arb.schemas.base import SerializableValue
 
 
 class BaseExchangeClient(ABC):
@@ -161,4 +164,35 @@ class BaseExchangeClient(ABC):
                     timestamp=timestamp,
                 )
             ),
+        )
+
+    def build_json_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        base_url: str,
+        params: Mapping[str, SerializableValue] | None = None,
+        body: Mapping[str, SerializableValue] | None = None,
+        headers: Mapping[str, str] | None = None,
+        signed: bool = False,
+    ) -> HttpRequest:
+        """Build a JSON REST request with optional signed auth headers."""
+
+        request_params = dict(params or {})
+        query = urlencode({key: str(value) for key, value in request_params.items()})
+        request_body = dict(body or {})
+        body_text = json.dumps(request_body, separators=(",", ":")) if body is not None else ""
+        request_headers = dict(headers or {})
+        if signed:
+            request_headers.update(self.sign_request(method, path, query=query, body=body_text))
+        return HttpRequest(
+            method=method,
+            url=f"{base_url}{path}",
+            path=path,
+            params=request_params,
+            json_body=request_body,
+            body_text=body_text,
+            headers=request_headers,
+            signed=signed,
         )

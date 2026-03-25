@@ -5,11 +5,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import json
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
-from urllib.parse import urlencode
 
 from arb.exchange.base import BaseExchangeClient
 from arb.funding import extract_funding_interval_hours
@@ -329,26 +327,12 @@ class OkxExchange(BaseExchangeClient):
         body: Mapping[str, SerializableValue] | None = None,
         signed: bool = False,
     ) -> JsonValue:
-        query = urlencode({key: str(value) for key, value in (params or {}).items()})
-        body_text = json.dumps(body or {}, separators=(",", ":")) if body is not None else ""
-        headers: dict[str, str] = {}
-        if signed:
-            headers = dict(
-                self.sign_request(
-                    method,
-                    path,
-                    query=query,
-                    body=body_text,
-                )
-            )
-        request = HttpRequest(
-            method=method,
-            url=f"{self.base_url}{path}",
-            path=path,
-            params=dict(params or {}),
-            json_body=dict(body or {}),
-            body_text=body_text,
-            headers=headers,
+        request = self.build_json_request(
+            method,
+            path,
+            base_url=self.base_url,
+            params=params,
+            body=body,
             signed=signed,
         )
         return await self._transport(request)
