@@ -14,6 +14,13 @@ from arb.execution.protocols import ClockFn, CreateOrderClient
 from arb.execution.router import ExecutionRouter, RouteDecision
 from arb.models import MarketType, Order, Side
 from arb.strategy.spot_perp import SpotPerpInputs, SpotPerpStrategy
+from arb.workflows.components import (
+    DefaultVenueResolver,
+    DefaultWorkflowRoutePlanner,
+    RoutePlanningRequest,
+    VenueResolver,
+    WorkflowRoutePlanner,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -80,11 +87,15 @@ class OpenPositionWorkflow:
         strategy: SpotPerpStrategy | None = None,
         executor: PairExecutor | None = None,
         router: ExecutionRouter | None = None,
+        route_planner: WorkflowRoutePlanner | None = None,
+        venue_resolver: VenueResolver[VenueClients] | None = None,
         clock: ClockFn | None = None,
     ) -> None:
         self.strategy = strategy or SpotPerpStrategy()
         self.executor = executor or PairExecutor()
         self.router = router or ExecutionRouter()
+        self.route_planner = route_planner or DefaultWorkflowRoutePlanner(self.router)
+        self.venue_resolver = venue_resolver or DefaultVenueResolver()
         self.clock = clock or time.monotonic
 
     async def execute(self, request: OpenPositionRequest) -> OpenPositionResult:
@@ -152,17 +163,19 @@ class OpenPositionWorkflow:
         )
 
     async def execute_cross_exchange(self, request: CrossExchangeOpenRequest) -> OpenPositionResult:
-        route = self.router.route(
-            preferred_exchange=request.short_exchange,
-            fallback_exchange=request.long_exchange,
-            exchange_available=True,
-            urgent=request.urgent,
-            maker_fee_rate=request.maker_fee_rate,
-            taker_fee_rate=request.taker_fee_rate,
-            spread_bps=request.spread_bps,
+        route = self.route_planner.plan(
+            RoutePlanningRequest(
+                preferred_exchange=request.short_exchange,
+                fallback_exchange=request.long_exchange,
+                exchange_available=True,
+                urgent=request.urgent,
+                maker_fee_rate=request.maker_fee_rate,
+                taker_fee_rate=request.taker_fee_rate,
+                spread_bps=request.spread_bps,
+            )
         )
-        long_venue = request.venue_clients.get(request.long_exchange)
-        short_venue = request.venue_clients.get(request.short_exchange)
+        long_venue = self.venue_resolver.resolve(request.venue_clients, request.long_exchange)
+        short_venue = self.venue_resolver.resolve(request.venue_clients, request.short_exchange)
         if long_venue is None or short_venue is None:
             missing = request.long_exchange if long_venue is None else request.short_exchange
             return OpenPositionResult(status="failed", reason=f"missing venue: {missing}", route=route)
@@ -217,7 +230,7 @@ class OpenPositionWorkflow:
         request: OpenPositionRequest,
         route: RouteDecision,
     ) -> ExecutionResult:
-        venue = request.venue_clients.get(route.exchange)
+        venue = self.venue_resolver.resolve(request.venue_clients, route.exchange)
         if venue is None:
             return ExecutionResult(status="failed", reason=f"missing venue: {route.exchange}")
         spot_leg = ExecutionLeg(
@@ -254,14 +267,16 @@ class OpenPositionWorkflow:
         return execution
 
     def _route(self, request: OpenPositionRequest, *, urgent: bool) -> RouteDecision:
-        return self.router.route(
-            preferred_exchange=request.preferred_exchange,
-            fallback_exchange=request.fallback_exchange,
-            exchange_available=request.exchange_available,
-            urgent=urgent,
-            maker_fee_rate=request.maker_fee_rate,
-            taker_fee_rate=request.taker_fee_rate,
-            spread_bps=request.spread_bps,
+        return self.route_planner.plan(
+            RoutePlanningRequest(
+                preferred_exchange=request.preferred_exchange,
+                fallback_exchange=request.fallback_exchange,
+                exchange_available=request.exchange_available,
+                urgent=urgent,
+                maker_fee_rate=request.maker_fee_rate,
+                taker_fee_rate=request.taker_fee_rate,
+                spread_bps=request.spread_bps,
+            )
         )
 
     def _can_retry_with_taker(
@@ -300,7 +315,7 @@ class OpenPositionWorkflow:
                 return [], "naked_time_exceeded"
             return [], execution.reason or None
 
-        venue = request.venue_clients.get(route.exchange)
+        venue = self.venue_resolver.resolve(request.venue_clients, route.exchange)
         if venue is None:
             return [], execution.reason or f"missing venue: {route.exchange}"
 

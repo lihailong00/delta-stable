@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -12,8 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from arb.execution.executor import PairExecutor
 from arb.execution.guards import GuardContext
 from arb.execution.order_tracker import OrderTracker
+from arb.execution.router import RouteDecision
 from arb.models import MarketType, Order, OrderStatus, Side
 from arb.strategy.spot_perp import SpotPerpStrategy
+from arb.workflows.components import RoutePlanningRequest
 from arb.workflows.open_position import OpenPositionRequest, OpenPositionWorkflow, VenueClients
 
 
@@ -60,6 +63,31 @@ class _Clock:
         value = self.values[self.index]
         self.index += 1
         return value
+
+
+@dataclass
+class _RoutePlanner:
+    exchange: str
+    mode: str
+    calls: list[RoutePlanningRequest] = field(default_factory=list)
+
+    def plan(self, request: RoutePlanningRequest) -> RouteDecision:
+        self.calls.append(request)
+        return RouteDecision(mode=self.mode, exchange=self.exchange, urgent=request.urgent)
+
+
+@dataclass
+class _VenueResolver:
+    alias: str
+    target: str
+
+    def resolve(
+        self,
+        venue_clients: Mapping[str, VenueClients],
+        exchange: str,
+    ) -> VenueClients | None:
+        normalized_exchange = self.target if exchange == self.alias else exchange
+        return venue_clients.get(normalized_exchange)
 
 
 @dataclass
@@ -268,3 +296,30 @@ class TestOpenPositionWorkflow:
 
         assert result.status == "rejected"
         assert result.reason == "funding_below_threshold"
+
+    async def test_open_position_supports_injected_route_planner_and_venue_resolver(self) -> None:
+        spot_client = _Client(
+            orders=[_order(exchange="binance", market_type=MarketType.SPOT, side=Side.BUY, quantity="1", price="100.1", order_id="spot-1", status=OrderStatus.FILLED, filled_quantity="1")],
+            fetched_orders=[_order(exchange="binance", market_type=MarketType.SPOT, side=Side.BUY, quantity="1", price="100.1", order_id="spot-1", status=OrderStatus.FILLED, filled_quantity="1")],
+        )
+        perp_client = _Client(
+            orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.SELL, quantity="1", price="100.1", order_id="perp-1", status=OrderStatus.FILLED, filled_quantity="1")],
+            fetched_orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.SELL, quantity="1", price="100.1", order_id="perp-1", status=OrderStatus.FILLED, filled_quantity="1")],
+        )
+        venue = VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)
+        route_planner = _RoutePlanner(exchange="synthetic-binance", mode="taker")
+        venue_resolver = _VenueResolver(alias="synthetic-binance", target="binance")
+        workflow = OpenPositionWorkflow(
+            executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep)),
+            route_planner=route_planner,
+            venue_resolver=venue_resolver,
+        )
+
+        result = await workflow.execute(_request(venue=venue))
+
+        assert result.status == "opened"
+        assert result.route is not None
+        assert result.route.exchange == "synthetic-binance"
+        assert result.route.mode == "taker"
+        assert route_planner.calls[0].preferred_exchange == "binance"
+        assert spot_client.submitted[0]["price"] > Decimal("100")

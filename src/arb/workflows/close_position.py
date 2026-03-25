@@ -12,6 +12,13 @@ from arb.execution.router import ExecutionRouter, RouteDecision
 from arb.models import MarketType, Side
 from arb.risk.checks import RiskAlert, RiskChecker, RiskReason
 from arb.risk.killswitch import KillSwitch
+from arb.workflows.components import (
+    DefaultVenueResolver,
+    DefaultWorkflowRoutePlanner,
+    RoutePlanningRequest,
+    VenueResolver,
+    WorkflowRoutePlanner,
+)
 from arb.workflows.open_position import VenueClients
 
 
@@ -137,11 +144,15 @@ class ClosePositionWorkflow:
         *,
         executor: PairExecutor | None = None,
         router: ExecutionRouter | None = None,
+        route_planner: WorkflowRoutePlanner | None = None,
+        venue_resolver: VenueResolver[VenueClients] | None = None,
         risk_checker: RiskChecker | None = None,
         kill_switch: KillSwitch | None = None,
     ) -> None:
         self.executor = executor or PairExecutor()
         self.router = router or ExecutionRouter()
+        self.route_planner = route_planner or DefaultWorkflowRoutePlanner(self.router)
+        self.venue_resolver = venue_resolver or DefaultVenueResolver()
         self.risk_checker = risk_checker or RiskChecker()
         self.kill_switch = kill_switch or KillSwitch()
 
@@ -247,17 +258,19 @@ class ClosePositionWorkflow:
         因为目标是尽快退出风险敞口，所以默认以 urgent 模式进行路由。
         """
 
-        route = self.router.route(
-            preferred_exchange=request.short_exchange,
-            fallback_exchange=request.long_exchange,
-            exchange_available=True,
-            urgent=True,
-            maker_fee_rate=request.maker_fee_rate,
-            taker_fee_rate=request.taker_fee_rate,
-            spread_bps=request.spread_bps,
+        route = self.route_planner.plan(
+            RoutePlanningRequest(
+                preferred_exchange=request.short_exchange,
+                fallback_exchange=request.long_exchange,
+                exchange_available=True,
+                urgent=True,
+                maker_fee_rate=request.maker_fee_rate,
+                taker_fee_rate=request.taker_fee_rate,
+                spread_bps=request.spread_bps,
+            )
         )
-        long_venue = request.venue_clients.get(request.long_exchange)
-        short_venue = request.venue_clients.get(request.short_exchange)
+        long_venue = self.venue_resolver.resolve(request.venue_clients, request.long_exchange)
+        short_venue = self.venue_resolver.resolve(request.venue_clients, request.short_exchange)
         # 任意一条腿缺少客户端时，都无法继续执行。
         if long_venue is None or short_venue is None:
             missing = request.long_exchange if long_venue is None else request.short_exchange
@@ -329,7 +342,7 @@ class ClosePositionWorkflow:
         返回的 `ExecutionResult` 会被上层用于判断是否需要重试以及剩余数量。
         """
 
-        venue = request.venue_clients.get(route.exchange)
+        venue = self.venue_resolver.resolve(request.venue_clients, route.exchange)
         if venue is None:
             return ExecutionResult(status="failed", reason=f"missing venue: {route.exchange}")
         # 两条腿都已经没有剩余数量时，直接视作成功完成。
@@ -404,14 +417,16 @@ class ClosePositionWorkflow:
     def _route(self, request: ClosePositionRequest, *, urgent: bool) -> RouteDecision:
         """根据当前请求和紧急程度生成执行路由。"""
 
-        return self.router.route(
-            preferred_exchange=request.preferred_exchange,
-            fallback_exchange=request.fallback_exchange,
-            exchange_available=request.exchange_available,
-            urgent=urgent,
-            maker_fee_rate=request.maker_fee_rate,
-            taker_fee_rate=request.taker_fee_rate,
-            spread_bps=request.spread_bps,
+        return self.route_planner.plan(
+            RoutePlanningRequest(
+                preferred_exchange=request.preferred_exchange,
+                fallback_exchange=request.fallback_exchange,
+                exchange_available=request.exchange_available,
+                urgent=urgent,
+                maker_fee_rate=request.maker_fee_rate,
+                taker_fee_rate=request.taker_fee_rate,
+                spread_bps=request.spread_bps,
+            )
         )
 
     def _alerts(self, request: ClosePositionRequest) -> list[RiskAlert]:

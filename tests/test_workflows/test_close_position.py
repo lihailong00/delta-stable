@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -12,8 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from arb.execution.executor import PairExecutor
 from arb.execution.order_tracker import OrderTracker
+from arb.execution.router import RouteDecision
 from arb.models import MarketType, Order, OrderStatus, Side
 from arb.risk.killswitch import KillSwitch
+from arb.workflows.components import RoutePlanningRequest
 from arb.workflows.close_position import ClosePositionRequest, ClosePositionWorkflow
 from arb.workflows.open_position import VenueClients
 
@@ -116,6 +119,31 @@ class _Client:
 
     async def fetch_fills(self, order_id: str, symbol: str, market_type: MarketType) -> tuple[()]:
         return ()
+
+
+@dataclass
+class _RoutePlanner:
+    exchange: str
+    mode: str
+    calls: list[RoutePlanningRequest] = field(default_factory=list)
+
+    def plan(self, request: RoutePlanningRequest) -> RouteDecision:
+        self.calls.append(request)
+        return RouteDecision(mode=self.mode, exchange=self.exchange, urgent=request.urgent)
+
+
+@dataclass
+class _VenueResolver:
+    alias: str
+    target: str
+
+    def resolve(
+        self,
+        venue_clients: Mapping[str, VenueClients],
+        exchange: str,
+    ) -> VenueClients | None:
+        normalized_exchange = self.target if exchange == self.alias else exchange
+        return venue_clients.get(normalized_exchange)
 
 
 def _request(*, venue: VenueClients, **kwargs: object) -> ClosePositionRequest:
@@ -232,3 +260,30 @@ class TestClosePositionWorkflow:
         assert result.status == "reduced"
         assert result.remaining_spot_quantity == Decimal("0.9")
         assert result.remaining_perp_quantity == Decimal("0.9")
+
+    async def test_close_workflow_supports_injected_route_planner_and_venue_resolver(self) -> None:
+        spot_client = _Client(
+            orders=[_order(exchange="binance", market_type=MarketType.SPOT, side=Side.SELL, quantity="1", price="99.9", order_id="spot-close", status=OrderStatus.FILLED, filled_quantity="1")],
+            fetched_orders=[_order(exchange="binance", market_type=MarketType.SPOT, side=Side.SELL, quantity="1", price="99.9", order_id="spot-close", status=OrderStatus.FILLED, filled_quantity="1")],
+        )
+        perp_client = _Client(
+            orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.BUY, quantity="1", price="100.3", order_id="perp-close", status=OrderStatus.FILLED, filled_quantity="1", reduce_only=True)],
+            fetched_orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.BUY, quantity="1", price="100.3", order_id="perp-close", status=OrderStatus.FILLED, filled_quantity="1", reduce_only=True)],
+        )
+        venue = VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)
+        route_planner = _RoutePlanner(exchange="synthetic-binance", mode="taker")
+        venue_resolver = _VenueResolver(alias="synthetic-binance", target="binance")
+        workflow = ClosePositionWorkflow(
+            executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep)),
+            route_planner=route_planner,
+            venue_resolver=venue_resolver,
+        )
+
+        result = await workflow.execute(_request(venue=venue, max_holding_period=None))
+
+        assert result.status == "closed"
+        assert result.route is not None
+        assert result.route.exchange == "synthetic-binance"
+        assert result.route.mode == "taker"
+        assert route_planner.calls[0].preferred_exchange == "binance"
+        assert spot_client.submitted[0]["price"] < Decimal("100")
