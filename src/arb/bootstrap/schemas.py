@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, is_dataclass
 from enum import Enum
@@ -25,12 +24,12 @@ class FundingArbCliArgs(ArbFrozenModel):
     iterations: int = 1
 
     @classmethod
-    def from_namespace(cls, args: argparse.Namespace) -> "FundingArbCliArgs":
+    def from_object(cls, args: Mapping[str, SerializableValue] | object) -> "FundingArbCliArgs":
         return cls(
-            exchange=tuple(getattr(args, "exchange", ())),
-            symbol=tuple(getattr(args, "symbol", ())),
-            market_type=str(getattr(args, "market_type", "perpetual")),
-            iterations=int(getattr(args, "iterations", 1)),
+            exchange=_read_sequence_arg(args, "exchange"),
+            symbol=_read_sequence_arg(args, "symbol"),
+            market_type=str(_read_arg(args, "market_type", "perpetual")),
+            iterations=int(_read_arg(args, "iterations", 1)),
         )
 
 
@@ -40,20 +39,32 @@ class FundingArbRunReport(ArbFrozenModel):
 
 
 type CliResult = CliParsedResult | FundingArbRunReport | ArbModel | SerializableValue
-type CommandHandler = Callable[[argparse.Namespace], CliResult | Awaitable[CliResult]]
+type CommandHandler = Callable[[Mapping[str, SerializableValue]], CliResult | Awaitable[CliResult]]
 type CommandHandlerMap = Mapping[str, CommandHandler]
 
 
-def namespace_to_serializable(args: argparse.Namespace) -> dict[str, SerializableValue]:
-    """Convert argparse namespaces into explicit serializable payloads."""
+def cli_args_to_serializable(args: Mapping[str, object]) -> dict[str, SerializableValue]:
+    """Convert CLI argument payloads into explicit serializable values."""
 
     serializable: dict[str, SerializableValue] = {}
-    for key, value in vars(args).items():
-        if isinstance(value, Sequence) and not isinstance(value, str):
-            serializable[key] = [item for item in value]
-        else:
-            serializable[key] = value
+    for key, value in args.items():
+        serializable[key] = to_serializable(value)
     return serializable
+
+
+def _read_arg(args: Mapping[str, SerializableValue] | object, key: str, default: object) -> object:
+    if isinstance(args, Mapping):
+        return args.get(key, default)
+    return getattr(args, key, default)
+
+
+def _read_sequence_arg(args: Mapping[str, SerializableValue] | object, key: str) -> tuple[str, ...]:
+    value = _read_arg(args, key, ())
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return tuple(str(item) for item in value)
+    if value in (None, ""):
+        return ()
+    return (str(value),)
 
 
 def to_serializable(value: object) -> SerializableValue:

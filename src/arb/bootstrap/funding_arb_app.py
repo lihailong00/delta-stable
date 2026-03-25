@@ -39,11 +39,11 @@ class FundingArbApp:
 
     async def run_funding_arb(
         self,
-        args: FundingArbCliArgs | object,
+        args: FundingArbCliArgs | Mapping[str, SerializableValue] | object,
         *,
         dry_run: bool,
     ) -> FundingArbRunReport:
-        cli_args = args if isinstance(args, FundingArbCliArgs) else FundingArbCliArgs.from_namespace(args)
+        cli_args = args if isinstance(args, FundingArbCliArgs) else FundingArbCliArgs.from_object(args)
         market_type = MarketType(cli_args.market_type)
         targets = [
             ScanTarget(exchange, symbol, market_type)

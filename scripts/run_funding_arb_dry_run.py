@@ -3,13 +3,17 @@
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Annotated
 
+import typer
+
+from arb.cli_support import normalize_multi_value_options
 from arb.execution.executor import PairExecutor
 from arb.execution.order_tracker import OrderTracker
 from arb.models import MarketType, Order, OrderStatus, Side
@@ -21,6 +25,19 @@ from arb.runtime.supervisor import RuntimeSupervisor
 from arb.scanner.funding_scanner import FundingScanner
 from arb.workflows.close_position import ClosePositionWorkflow
 from arb.workflows.open_position import OpenPositionWorkflow, VenueClients
+
+_OPTION_NAMES = {
+    "--exchange",
+    "--symbol",
+    "--iterations",
+    "--supervised",
+    "--max-restarts",
+    "--funding-sequence",
+    "--help",
+}
+_MULTI_VALUE_OPTIONS = {
+    "--funding-sequence",
+}
 
 
 async def _sleep(_: float) -> None:
@@ -124,32 +141,23 @@ class _SequenceRuntime:
         return True
 
     async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> dict[str, object]:
+        del symbol, market_type
         rate = self.funding_sequence[min(self.index, len(self.funding_sequence) - 1)]
         self.index += 1
         return _snapshot(self.exchange, self.symbol, rate)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run funding arbitrage dry-run loop")
-    parser.add_argument("--exchange", default=os.getenv("ARB_EXCHANGE", "binance"))
-    parser.add_argument("--symbol", default=os.getenv("ARB_SYMBOL", "BTC/USDT"))
-    parser.add_argument("--iterations", type=int, default=int(os.getenv("ARB_ITERATIONS", "2")))
-    parser.add_argument("--supervised", action="store_true", help="Run iterations under RuntimeSupervisor.")
-    parser.add_argument("--max-restarts", type=int, default=int(os.getenv("ARB_MAX_RESTARTS", "2")))
-    parser.add_argument(
-        "--funding-sequence",
-        nargs="+",
-        default=os.getenv("ARB_FUNDING_SEQUENCE", "0.001 -0.0002").split(),
-        help="Funding rates used across iterations.",
-    )
-    return parser
-
-
-async def main() -> None:
-    args = build_parser().parse_args()
-    funding_sequence = [Decimal(item) for item in args.funding_sequence]
-    runtime = _SequenceRuntime(args.exchange, args.symbol, funding_sequence)
-    manager = LiveExchangeManager({args.exchange: runtime})
+async def _run_dry_run(
+    *,
+    exchange: str,
+    symbol: str,
+    iterations: int,
+    supervised: bool,
+    max_restarts: int,
+    funding_sequence: list[Decimal],
+) -> None:
+    runtime = _SequenceRuntime(exchange, symbol, funding_sequence)
+    manager = LiveExchangeManager({exchange: runtime})
     scanner = RealtimeScanner(
         manager,
         FundingScanner(min_net_rate=Decimal("0.0001")),
@@ -157,20 +165,23 @@ async def main() -> None:
         interval=0,
     )
     venue = VenueClients(
-        exchange=args.exchange,
-        spot_client=_NoopClient(args.symbol, Side.BUY, MarketType.SPOT, "spot"),
-        perp_client=_NoopClient(args.symbol, Side.SELL, MarketType.PERPETUAL, "perp"),
+        exchange=exchange,
+        spot_client=_NoopClient(symbol, Side.BUY, MarketType.SPOT, "spot"),
+        perp_client=_NoopClient(symbol, Side.SELL, MarketType.PERPETUAL, "perp"),
     )
     service = FundingArbService(
         scanner=scanner,
-        open_workflow=OpenPositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
-        close_workflow=ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
-        venues={args.exchange: venue},
+        open_workflow=OpenPositionWorkflow(
+            executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))
+        ),
+        close_workflow=ClosePositionWorkflow(
+            executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))
+        ),
+        venues={exchange: venue},
         manager=manager,
         pipeline=OpportunityPipeline(),
     )
-    targets = [ScanTarget(args.exchange, args.symbol, MarketType.PERPETUAL)]
-
+    targets = [ScanTarget(exchange, symbol, MarketType.PERPETUAL)]
     state = {"iteration": 0}
 
     async def run_iteration() -> dict[str, object]:
@@ -182,9 +193,9 @@ async def main() -> None:
         )
         return result
 
-    if args.supervised:
-        supervisor = RuntimeSupervisor(run_iteration, max_restarts=args.max_restarts)
-        await supervisor.run_forever(iterations=args.iterations)
+    if supervised:
+        supervisor = RuntimeSupervisor(run_iteration, max_restarts=max_restarts)
+        await supervisor.run_forever(iterations=iterations)
         snapshot = supervisor.snapshot()
         print(
             "supervisor "
@@ -193,9 +204,44 @@ async def main() -> None:
         )
         return
 
-    for _ in range(args.iterations):
+    for _ in range(iterations):
         await run_iteration()
 
 
+def main(
+    exchange: Annotated[str, typer.Option("--exchange")] = os.getenv("ARB_EXCHANGE", "binance"),
+    symbol: Annotated[str, typer.Option("--symbol")] = os.getenv("ARB_SYMBOL", "BTC/USDT"),
+    iterations: Annotated[int, typer.Option("--iterations")] = int(os.getenv("ARB_ITERATIONS", "2")),
+    supervised: Annotated[bool, typer.Option("--supervised")] = False,
+    max_restarts: Annotated[int, typer.Option("--max-restarts")] = int(os.getenv("ARB_MAX_RESTARTS", "2")),
+    funding_sequence: Annotated[list[str] | None, typer.Option("--funding-sequence")] = None,
+) -> None:
+    sequence_values = funding_sequence or os.getenv("ARB_FUNDING_SEQUENCE", "0.001 -0.0002").split()
+    asyncio.run(
+        _run_dry_run(
+            exchange=exchange,
+            symbol=symbol,
+            iterations=iterations,
+            supervised=supervised,
+            max_restarts=max_restarts,
+            funding_sequence=[Decimal(item) for item in sequence_values],
+        )
+    )
+
+
+def run(argv: list[str] | None = None) -> None:
+    normalized_argv = normalize_multi_value_options(
+        list(sys.argv[1:] if argv is None else argv),
+        multi_value_options=_MULTI_VALUE_OPTIONS,
+        option_names=_OPTION_NAMES,
+    )
+    original_argv = sys.argv[:]
+    try:
+        sys.argv = [original_argv[0], *normalized_argv]
+        typer.run(main)
+    finally:
+        sys.argv = original_argv
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    run()

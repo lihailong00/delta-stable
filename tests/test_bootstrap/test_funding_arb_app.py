@@ -119,16 +119,13 @@ class TestFundingArbAppBootstrap:
 
             handlers = app.cli_handlers()
             result = await handlers["funding-arb-dry-run"](
-                type(
-                    "Args",
-                    (),
-                    {
-                        "exchange": ["binance"],
-                        "symbol": ["BTC/USDT"],
-                        "market_type": "perpetual",
-                        "iterations": 2,
-                    },
-                )()
+                {
+                    "command": "funding-arb-dry-run",
+                    "exchange": ["binance"],
+                    "symbol": ["BTC/USDT"],
+                    "market_type": "perpetual",
+                    "iterations": 2,
+                }
             )
 
             assert result["iterations"] == 2
