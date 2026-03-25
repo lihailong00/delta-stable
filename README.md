@@ -4,9 +4,9 @@
 
 这套代码的定位不是“已经能直接实盘跑的完整服务”，而是“实盘系统的可测试核心部件”。现在每个模块都能单独测试、单独替换，后续你可以按自己的部署方式把它们串成一个长期运行的进程或多个服务。
 
-简单使用手册见 [simple-usage-manual.md](/home/longcoding/dev/project/delta_stable/docs/simple-usage-manual.md)。
-日常操作和熟练使用路径见 [operator-guide.md](/home/longcoding/dev/project/delta_stable/docs/operator-guide.md)。
-Pydantic 建模约束和类型门禁见 [pydantic-modeling-guide.md](/home/longcoding/dev/project/delta_stable/docs/pydantic-modeling-guide.md) 与 [type-checking-guide.md](/home/longcoding/dev/project/delta_stable/docs/type-checking-guide.md)。
+使用和日常操作入口见 [operator-guide.md](/home/longcoding/dev/project/delta_stable/docs/operator-guide.md)。
+架构与代码阅读路径见 [funding-arb-architecture-overview.md](/home/longcoding/dev/project/delta_stable/docs/funding-arb-architecture-overview.md)。
+建模、类型门禁和 transport 说明见 [pydantic-modeling-guide.md](/home/longcoding/dev/project/delta_stable/docs/pydantic-modeling-guide.md) 与 [typed-transport-guide.md](/home/longcoding/dev/project/delta_stable/docs/typed-transport-guide.md)。
 
 ## 阈值回测怎么用
 

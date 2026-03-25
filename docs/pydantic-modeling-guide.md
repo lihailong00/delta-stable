@@ -1,12 +1,13 @@
 # Pydantic Modeling Guide
 
-这个仓库后续的类型收敛，统一按下面几条执行。
-
 ## 目标
 
-- 模块边界都用显式 `BaseModel`
-- 主链上不再新增 `dict[str, Any]`、`list[dict[str, Any]]`、`Any`
-- 原始交易所 JSON 只允许停留在最外层协议边界
+这份文档现在同时覆盖两件事：
+
+- 项目里的 Pydantic 建模约束
+- 类型门禁和本地检查方式
+
+不再单独拆一份类型检查文档。
 
 ## 默认基类
 
@@ -16,56 +17,59 @@
 两者都默认：
 
 - `extra="forbid"`
-- 明确字段定义
-- 支持统一 `to_dict()`
+- 显式字段定义
+- 允许统一 `to_dict()`
 
-## 必须用模型的边界
+对应实现见 [base.py](/home/longcoding/dev/project/delta_stable/src/arb/schemas/base.py)。
 
-- 市场快照
-- WS 标准化事件
-- scanner 输出
-- workflow 状态
-- 回测数据行、回测报告、运行结果
-- 控制 API 请求/响应
-- 飞书回调和卡片数据
-- CLI 和 bootstrap 的对外配置对象
-- 存储层读写行对象
+## 什么地方必须建模
 
-## 行为接口用 Protocol
+- 领域对象：订单、仓位、PnL、风控状态
+- API / command 输入输出
+- runtime / workflow / storage 的跨模块边界
+- transport 层的请求与响应边界
 
-下面这些不是数据对象，优先用 `Protocol`，不要硬塞成 `BaseModel`：
+只有在最外层交易所原始 JSON 边界，才允许短暂保留原始 mapping。
 
-- 执行层 exchange client
-- order tracker 依赖的轮询 / 撤单 / fill 查询接口
-- workflow 里的 venue client
-- runtime 的 ws connector / streaming helper
+## 建模时的默认原则
 
-判断规则很简单：
+- 不新增 `dict[str, Any]`、`list[dict[str, Any]]` 作为主链返回值
+- 不把原始交易所字段名一路传到业务层
+- 一旦某个结构被两个模块以上共享，就升成模型
+- 如果一个对象需要被修改，才用可变模型；否则优先不可变模型
 
-- “这是一段固定字段的数据” -> `Pydantic`
-- “这是一个需要实现某些方法的协作者” -> `Protocol`
+## 与 transport 层的关系
 
-## 可以保留原始映射的边界
+- `src/arb/schemas/base.py` 负责业务模型
+- `src/typed_transport/types.py` 负责通用 transport 模型
+- `src/arb/net/schemas.py` 目前只保留兼容字段，例如交易所侧还在使用的 `market_type`、`signed`
 
-- 交易所 REST/WS 收到的最原始 JSON
-- 网络层 connector 的极薄适配接口
-- 少量兼容旧接口的过渡适配层
+业务模型不要直接依赖交易所原始请求/响应字段。
 
-这些原始载荷一旦进入系统，必须尽快转成模型。
+## 本地类型门禁
 
-## 禁止项
+推荐最少跑这两步：
 
-- 新增 `Any` 作为 service、runtime、control 主链参数或返回值
-- 用 `dict[str, str]` 表示其实已经有固定字段的业务对象
-- 在测试里用松散 dict 伪造复杂业务对象，而不是使用工厂或显式模型
+```bash
+uv run pytest -q
+uv run mypy src
+```
 
-## 迁移原则
+如果你只改了局部模块，也至少要保证对应测试和受影响的 mypy 范围能通过。
 
-1. 先定义模型，再迁移调用点
-2. 兼容层只作为过渡，不长期保留
-3. 优先收紧主链，再处理边角模块
+## 什么时候该补类型
 
-## 配套检查
+- 新增公共 schema
+- 把某段 `dict` 逻辑抽成共享组件
+- 从一个模块把数据交给另一个模块
+- 给 transport / storage / control 新增边界
 
-- 建模规范看这里
-- 类型门禁和本地/CI 检查命令看 [type-checking-guide.md](/home/longcoding/dev/project/delta_stable/docs/type-checking-guide.md)
+如果你发现一个接口已经开始写字段文档、写字段约定、写示例 payload，通常就该建模了。
+
+## 什么时候不要过度建模
+
+- 单个函数内部、只用一次的临时变量
+- 紧贴交易所原始响应、马上就会被 normalize 的中间数据
+- 只在测试里临时拼的最小 fake payload
+
+原则是：边界显式，内部适度。
