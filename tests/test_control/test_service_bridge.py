@@ -87,7 +87,6 @@ class TestServiceBridge:
             workflow_id=workflow_id,
             exchange="binance",
             symbol="BTC/USDT",
-            quantity=Decimal("1"),
             spot_quantity=Decimal("1"),
             perp_quantity=Decimal("1"),
             opened_at=datetime.now(tz=timezone.utc),
@@ -107,3 +106,18 @@ class TestServiceBridge:
         assert workflow_id not in self.service.active_positions
         assert not self.service.manager.has_slot("binance:BTC/USDT")
         assert self.repository.workflows[-1]["status"] == "manual_close_requested"
+
+    def test_positions_use_larger_leg_quantity_for_display(self) -> None:
+        workflow_id = "funding_spot_perp:binance:BTC/USDT"
+        self.service.active_positions[workflow_id] = ActiveFundingArb(
+            workflow_id=workflow_id,
+            exchange="binance",
+            symbol="BTC/USDT",
+            spot_quantity=Decimal("0.8"),
+            perp_quantity=Decimal("1"),
+            opened_at=datetime.now(tz=timezone.utc),
+        )
+
+        positions = self.bridge.positions()
+
+        assert positions[0]["quantity"] == "1"

@@ -25,6 +25,12 @@ from arb.schemas.base import ArbModel, SerializableValue
 from arb.storage.schemas import StoredOrderRow, StoredWorkflowStateRow
 
 
+def _hedged_quantity(position: ActiveFundingArb) -> Decimal:
+    """返回对冲仓位当前两条腿中的较大数量，用于控制面展示。"""
+
+    return max(position.spot_quantity, position.perp_quantity)
+
+
 class ServiceLike(Protocol):
     manager: object
     strategy_name: str
@@ -99,7 +105,7 @@ class ServiceBridge:
                 exchange=position.exchange,
                 symbol=position.symbol,
                 market_type=MarketType.PERPETUAL.value,
-                quantity=str(position.quantity),
+                quantity=str(_hedged_quantity(position)),
                 direction="hedged",
             )
             for position in self.service.active_positions.values()

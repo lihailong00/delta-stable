@@ -25,7 +25,6 @@ class ActiveFundingArb(ArbModel):
     symbol: str  # 交易对，如 "BTCUSDT"
 
     # === 仓位信息 ===
-    quantity: Decimal  # 目标仓位大小（名义价值）
     spot_quantity: Decimal  # 现货腿的实际数量
     perp_quantity: Decimal  # 永续合约腿的实际数量
 

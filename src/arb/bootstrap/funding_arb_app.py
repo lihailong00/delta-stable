@@ -16,6 +16,7 @@ from arb.execution import OrderTracker, PairExecutor
 from arb.models import MarketType
 from arb.runtime import FundingArbService, LiveExchangeManager, OpportunityPipeline, RealtimeScanner, ScanTarget
 from arb.runtime.protocols import LiveRuntimeProtocol
+from arb.runtime.schemas import ActiveFundingArb
 from arb.scanner.funding_scanner import FundingScanner
 from arb.schemas.base import SerializableValue
 from arb.storage import Database, Repository
@@ -127,13 +128,19 @@ async def _noop_sleep(_: float) -> None:
     return None
 
 
+def _hedged_quantity(position: ActiveFundingArb) -> Decimal:
+    """返回对冲仓位当前两条腿中的较大数量，用于 API 展示。"""
+
+    return max(position.spot_quantity, position.perp_quantity)
+
+
 def _positions_payload(service: FundingArbService) -> list[PositionResponse]:
     return [
         PositionResponse(
             exchange=position.exchange,
             symbol=position.symbol,
             market_type=MarketType.PERPETUAL.value,
-            quantity=str(position.quantity),
+            quantity=str(_hedged_quantity(position)),
             direction="hedged",
         )
         for position in service.active_positions.values()

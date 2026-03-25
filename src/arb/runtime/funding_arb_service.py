@@ -135,10 +135,6 @@ class FundingArbService:
                 elif close_result.status == "reduced":
                     self.active_positions[key] = position.model_copy(
                         update={
-                            "quantity": max(
-                                close_result.remaining_spot_quantity,
-                                close_result.remaining_perp_quantity,
-                            ),
                             "spot_quantity": close_result.remaining_spot_quantity,
                             "perp_quantity": close_result.remaining_perp_quantity,
                         }
@@ -176,10 +172,6 @@ class FundingArbService:
             elif close_result.status == "reduced":
                 self.active_positions[key] = position.model_copy(
                     update={
-                        "quantity": max(
-                            close_result.remaining_spot_quantity,
-                            close_result.remaining_perp_quantity,
-                        ),
                         "spot_quantity": close_result.remaining_spot_quantity,
                         "perp_quantity": close_result.remaining_perp_quantity,
                     }
@@ -224,7 +216,6 @@ class FundingArbService:
                     workflow_id=key,
                     exchange=opportunity.exchange,
                     symbol=opportunity.symbol,
-                    quantity=self.position_quantity,
                     spot_quantity=spot_quantity,
                     perp_quantity=perp_quantity,
                     opened_at=current_time,
