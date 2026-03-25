@@ -1,60 +1,52 @@
-"""Shared network boundary schemas."""
+"""Compatibility request models layered on top of typed_transport."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 
-from pydantic import Field, computed_field
+from pydantic import Field
 
-from arb.schemas.base import ArbFrozenModel, SerializableValue
+from typed_transport.types import (
+    HttpRequest as TransportHttpRequest,
+    JsonArray,
+    JsonObject,
+    JsonValue,
+    TransportFrozenModel,
+    TransportModel,
+    coerce_request_model,
+    expect_list,
+    expect_mapping,
+)
 
-type JsonObject = dict[str, SerializableValue]
-type JsonArray = list[SerializableValue]
-type JsonValue = SerializableValue
 
+class HttpRequest(TransportHttpRequest):
+    """Project compatibility request model.
 
-class HttpRequest(ArbFrozenModel):
-    """Normalized HTTP transport payload."""
+    `typed_transport` keeps its HTTP request schema generic. The main `arb`
+    project still needs two exchange-facing compatibility fields while older
+    adapters migrate:
 
-    method: str
-    url: str
-    path: str | None = None
-    headers: dict[str, str] = Field(default_factory=dict)
-    params: dict[str, SerializableValue] = Field(default_factory=dict)
-    json_body: JsonObject | JsonArray | None = Field(default=None, alias="json")
-    body_text: str | None = None
-    timeout: float | None = None
+    - `market_type`: route hint for spot/perpetual specific callers
+    - `signed`: whether the request payload has already been signed
+    """
+
     market_type: str | None = None
     signed: bool = False
 
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def body(self) -> JsonObject | JsonArray | None:
-        return self.json_body
 
+def coerce_http_request(payload: HttpRequest | Mapping[str, JsonValue]) -> HttpRequest:
+    """Accept either a compatibility request model or a legacy request mapping."""
 
-def coerce_http_request(payload: HttpRequest | Mapping[str, SerializableValue]) -> HttpRequest:
-    """Accept either a transport model or a legacy request mapping."""
+    return coerce_request_model(HttpRequest, payload)
 
-    if isinstance(payload, HttpRequest):
-        return payload
-    candidate = dict(payload)
-    if "body" in candidate and "json" not in candidate:
-        candidate["json"] = candidate.pop("body")
-    return HttpRequest.model_validate(candidate)
-
-
-def expect_mapping(payload: JsonValue, *, context: str) -> JsonObject:
-    """Require a JSON object response."""
-
-    if not isinstance(payload, Mapping):
-        raise TypeError(f"{context} expected mapping payload, got {type(payload).__name__}")
-    return dict(payload)
-
-
-def expect_list(payload: JsonValue, *, context: str) -> JsonArray:
-    """Require a JSON array response."""
-
-    if not isinstance(payload, list):
-        raise TypeError(f"{context} expected list payload, got {type(payload).__name__}")
-    return list(payload)
+__all__ = [
+    "HttpRequest",
+    "JsonArray",
+    "JsonObject",
+    "JsonValue",
+    "TransportFrozenModel",
+    "TransportModel",
+    "coerce_http_request",
+    "expect_list",
+    "expect_mapping",
+]

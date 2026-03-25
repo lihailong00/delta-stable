@@ -1,0 +1,33 @@
+name: typed-transport
+
+on:
+  push:
+    paths:
+      - ".github/workflows/typed-transport.yml"
+      - "packages/typed-transport/**"
+      - "src/typed_transport/**"
+      - "src/arb/net/**"
+      - "tests/test_typed_transport/**"
+      - "tests/test_net/**"
+  pull_request:
+    paths:
+      - ".github/workflows/typed-transport.yml"
+      - "packages/typed-transport/**"
+      - "src/typed_transport/**"
+      - "src/arb/net/**"
+      - "tests/test_typed_transport/**"
+      - "tests/test_net/**"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --dev
+      - run: PYTHONPATH=src uv run mypy src/typed_transport
+      - run: PYTHONPATH=src:. uv run pytest -q tests/test_typed_transport tests/test_net
+      - run: uv build packages/typed-transport --out-dir dist/typed-transport
