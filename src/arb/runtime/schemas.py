@@ -17,16 +17,27 @@ from arb.workflows.open_position import OpenPositionResult
 
 
 class ActiveFundingArb(ArbModel):
-    workflow_id: str
-    exchange: str
-    symbol: str
-    quantity: Decimal
-    spot_quantity: Decimal
-    perp_quantity: Decimal
-    opened_at: datetime
-    liquidation_price: Decimal | None = None
-    route: object | None = None
-    state: StrategyState = Field(default_factory=StrategyState)
+    # === 身份标识 ===
+    workflow_id: str  # 唯一标识符，如 "funding_spot_perp:binance:BTCUSDT"
+
+    # === 基础信息 ===
+    exchange: str  # 交易所，如 "binance"
+    symbol: str  # 交易对，如 "BTCUSDT"
+
+    # === 仓位信息 ===
+    quantity: Decimal  # 目标仓位大小（名义价值）
+    spot_quantity: Decimal  # 现货腿的实际数量
+    perp_quantity: Decimal  # 永续合约腿的实际数量
+
+    # === 时间信息 ===
+    opened_at: datetime  # 开仓时间
+
+    # === 风控信息 ===
+    liquidation_price: Decimal | None = None  # 强平价格（如果有）
+
+    # === 策略信息 ===
+    route: object | None = None  # 执行路径（可选）
+    state: StrategyState = Field(default_factory=StrategyState)  # 策略状态（如是否已对冲）
 
     model_config = ConfigDict(
         extra="forbid",

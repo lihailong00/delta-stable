@@ -215,6 +215,10 @@ class TestFundingArbService:
         assert len(second["closed"]) == 1
         assert len(second["active"]) == 0
         assert [item["status"] for item in repository.workflow_states] == ["opening", "open", "closing", "closed"]
+        assert repository.workflow_states[-1]["payload"]["alert_count"] == 1
+        assert repository.workflow_states[-1]["payload"]["alerts"] == [
+            {"reason": "funding_reversal", "severity": "medium"}
+        ]
         assert len(repository.orders) == 4
         assert len(repository.positions) == 4
 
@@ -333,6 +337,78 @@ class TestFundingArbService:
 
         assert len(result["closed"]) == 1
         assert result["closed"][0].reason == "naked_leg"
+        assert [item["status"] for item in repository.workflow_states] == ["closing", "closed"]
+        assert repository.workflow_states[-1]["payload"]["alerts"] == [
+            {"reason": "naked_leg", "severity": "high"}
+        ]
+
+    async def test_service_records_warning_alerts_in_workflow_state(self) -> None:
+        scanner = _SequenceScanner(
+            [
+                {
+                    "snapshots": [
+                        {
+                            **build_market_snapshot("binance", "BTC/USDT", rate="0.0008").to_dict(),
+                            "view": {
+                                "spot_ticker": {"ask": "100"},
+                                "perp_ticker": {"bid": "101"},
+                            },
+                        }
+                    ],
+                    "opportunities": [],
+                    "output": [],
+                },
+                {
+                    "snapshots": [
+                        {
+                            **build_market_snapshot("binance", "BTC/USDT", rate="0.0008").to_dict(),
+                            "view": {
+                                "spot_ticker": {"ask": "100"},
+                                "perp_ticker": {"bid": "100.1"},
+                            },
+                        }
+                    ],
+                    "opportunities": [],
+                    "output": [],
+                },
+            ]
+        )
+        repository = _MemoryRepository()
+        service = FundingArbService(
+            scanner=scanner,
+            open_workflow=OpenPositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
+            close_workflow=ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
+            venues={},
+            manager=LiveExchangeManager({}),
+            pipeline=OpportunityPipeline(repository=repository),
+        )
+        workflow_id = "funding_spot_perp:binance:BTC/USDT"
+        service.active_positions[workflow_id] = ActiveFundingArb(
+            workflow_id=workflow_id,
+            exchange="binance",
+            symbol="BTC/USDT",
+            quantity=Decimal("1"),
+            spot_quantity=Decimal("1"),
+            perp_quantity=Decimal("1"),
+            opened_at=datetime.now(tz=timezone.utc),
+        )
+
+        first = await service.run_once([ScanTarget("binance", "BTC/USDT", MarketType.PERPETUAL)])
+        second = await service.run_once([ScanTarget("binance", "BTC/USDT", MarketType.PERPETUAL)])
+
+        assert first["closed"] == []
+        assert second["closed"] == []
+        assert [item["status"] for item in repository.workflow_states] == ["warning", "open"]
+        assert repository.workflow_states[0]["payload"] == {
+            "opened_at": service.active_positions[workflow_id].opened_at.isoformat(),
+            "alert_count": 1,
+            "alerts": [{"reason": "basis_out_of_range", "severity": "medium"}],
+        }
+        assert repository.workflow_states[1]["payload"] == {
+            "opened_at": service.active_positions[workflow_id].opened_at.isoformat(),
+            "alert_count": 0,
+            "alerts": [],
+        }
 
     async def test_service_uses_strategy_threshold_interval_for_open_decisions(self) -> None:
         spot_client = _Client(
