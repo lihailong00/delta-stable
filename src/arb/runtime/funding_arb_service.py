@@ -25,7 +25,7 @@ from arb.strategy.engine import StrategyAction, StrategyState
 from arb.strategy.spot_perp import SpotPerpInputs, SpotPerpStrategy
 from arb.workflows.close_position import ClosePositionRequest, ClosePositionResult, ClosePositionWorkflow
 from arb.workflows.enums import ClosePositionStatus, OpenPositionStatus
-from arb.workflows.open_position import OpenPositionRequest, OpenPositionResult, OpenPositionWorkflow, VenueClients
+from arb.workflows.open_position import OpenPositionRequest, OpenPositionResult, OpenPositionWorkflow, VenueClientBundle
 
 
 def _utc_now() -> datetime:
@@ -59,7 +59,7 @@ class FundingArbService:
         scanner: RealtimeScanner,
         open_workflow: OpenPositionWorkflow,
         close_workflow: ClosePositionWorkflow,
-        venues: dict[str, VenueClients],
+        venues: dict[str, VenueClientBundle],
         manager: LiveExchangeManager,
         pipeline: OpportunityPipeline,
         strategy: SpotPerpStrategy | None = None,

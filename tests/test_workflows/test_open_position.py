@@ -17,7 +17,7 @@ from arb.execution.router import RouteDecision, RouteMode
 from arb.models import MarketType, Order, OrderStatus, Side
 from arb.strategy.spot_perp import SpotPerpStrategy
 from arb.workflows.components import RoutePlanningRequest
-from arb.workflows.open_position import OpenPositionRequest, OpenPositionWorkflow, VenueClients
+from arb.workflows.open_position import OpenPositionRequest, OpenPositionWorkflow, VenueClientBundle
 
 
 async def _sleep(_: float) -> None:
@@ -83,9 +83,9 @@ class _VenueResolver:
 
     def resolve(
         self,
-        venue_clients: Mapping[str, VenueClients],
+        venue_clients: Mapping[str, VenueClientBundle],
         exchange: str,
-    ) -> VenueClients | None:
+    ) -> VenueClientBundle | None:
         normalized_exchange = self.target if exchange == self.alias else exchange
         return venue_clients.get(normalized_exchange)
 
@@ -160,7 +160,7 @@ class _Client:
         return ()
 
 
-def _request(*, venue: VenueClients, **kwargs: object) -> OpenPositionRequest:
+def _request(*, venue: VenueClientBundle, **kwargs: object) -> OpenPositionRequest:
     defaults: dict[str, object] = {
         "funding_rate": Decimal("0.001"),
         "spot_price": Decimal("100"),
@@ -191,7 +191,7 @@ class TestOpenPositionWorkflow:
             orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.SELL, quantity="1", price="100.2", order_id="perp-1", status=OrderStatus.FILLED, filled_quantity="1")],
             fetched_orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.SELL, quantity="1", price="100.2", order_id="perp-1", status=OrderStatus.FILLED, filled_quantity="1")],
         )
-        venue = VenueClients(
+        venue = VenueClientBundle(
             exchange="binance",
             spot_client=spot_client,
             perp_client=perp_client,
@@ -232,7 +232,7 @@ class TestOpenPositionWorkflow:
                 _order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.SELL, quantity="1", price="100.1", order_id="perp-taker", status=OrderStatus.FILLED, filled_quantity="1"),
             ],
         )
-        venue = VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)
+        venue = VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)
         workflow = OpenPositionWorkflow(
             executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep)),
             clock=_Clock(0.0, 0.2, 0.4),
@@ -265,7 +265,7 @@ class TestOpenPositionWorkflow:
                 _order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.SELL, quantity="1", price="100.2", order_id="perp-open", status=OrderStatus.NEW),
             ],
         )
-        venue = VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)
+        venue = VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)
         workflow = OpenPositionWorkflow(
             executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep)),
             clock=_Clock(0.0, 2.0),
@@ -280,7 +280,7 @@ class TestOpenPositionWorkflow:
         assert spot_client.submitted[-1]["quantity"] == Decimal("1")
 
     async def test_open_position_rejects_when_normalized_funding_is_below_threshold(self) -> None:
-        venue = VenueClients(exchange="binance", spot_client=_Client(orders=[]), perp_client=_Client(orders=[]))
+        venue = VenueClientBundle(exchange="binance", spot_client=_Client(orders=[]), perp_client=_Client(orders=[]))
         workflow = OpenPositionWorkflow(
             strategy=SpotPerpStrategy(min_open_funding_rate=Decimal("0.0001"), threshold_interval_hours=1),
             executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep)),
@@ -306,7 +306,7 @@ class TestOpenPositionWorkflow:
             orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.SELL, quantity="1", price="100.1", order_id="perp-1", status=OrderStatus.FILLED, filled_quantity="1")],
             fetched_orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.SELL, quantity="1", price="100.1", order_id="perp-1", status=OrderStatus.FILLED, filled_quantity="1")],
         )
-        venue = VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)
+        venue = VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)
         route_planner = _RoutePlanner(exchange="synthetic-binance", mode=RouteMode.TAKER)
         venue_resolver = _VenueResolver(alias="synthetic-binance", target="binance")
         workflow = OpenPositionWorkflow(

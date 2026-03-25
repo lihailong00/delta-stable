@@ -16,7 +16,7 @@ from arb.strategy.engine import StrategyAction, StrategyState
 from arb.strategy.perp_spread import PerpSpreadInputs, PerpSpreadStrategy
 from arb.workflows.enums import ClosePositionStatus, OpenPositionStatus
 from arb.workflows.close_position import CrossExchangeCloseRequest, ClosePositionResult, ClosePositionWorkflow
-from arb.workflows.open_position import CrossExchangeOpenRequest, OpenPositionResult, OpenPositionWorkflow, VenueClients
+from arb.workflows.open_position import CrossExchangeOpenRequest, OpenPositionResult, OpenPositionWorkflow, VenueClientBundle
 
 
 def _utc_now() -> datetime:
@@ -33,7 +33,7 @@ class CrossExchangeFundingService:
         pipeline: OpportunityPipeline,
         open_workflow: OpenPositionWorkflow,
         close_workflow: ClosePositionWorkflow,
-        venues: dict[str, VenueClients],
+        venues: dict[str, VenueClientBundle],
         strategy: PerpSpreadStrategy | None = None,
         position_quantity: Decimal = Decimal("1"),
         strategy_name: str = "cross_exchange_perp_spread",

@@ -14,7 +14,7 @@ from arb.bootstrap import build_funding_arb_app
 from arb.market.schemas import MarketSnapshot
 from arb.models import MarketType, Order, OrderStatus, Side
 from arb.runtime.exchange_manager import ScanTarget
-from arb.workflows import VenueClients
+from arb.workflows import VenueClientBundle
 from tests.factories import build_market_snapshot
 
 
@@ -113,7 +113,7 @@ class TestFundingArbAppBootstrap:
             )
             app = build_funding_arb_app(
                 runtimes={"binance": runtime},
-                venues={"binance": VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
+                venues={"binance": VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
                 database_path=Path(temp_dir.name) / "arb.sqlite3",
             )
 

@@ -21,7 +21,7 @@ from arb.runtime.pipeline import OpportunityPipeline
 from arb.scanner.funding_scanner import FundingOpportunity
 from arb.strategy.spot_perp import SpotPerpStrategy
 from arb.workflows.close_position import ClosePositionWorkflow
-from arb.workflows.open_position import OpenPositionWorkflow, VenueClients
+from arb.workflows.open_position import OpenPositionWorkflow, VenueClientBundle
 from tests.factories import build_market_snapshot
 
 
@@ -181,7 +181,7 @@ class TestFundingArbService:
                 _order(exchange="binance", symbol="BTC/USDT", market_type=MarketType.PERPETUAL, side=Side.BUY, order_id="perp-close", status=OrderStatus.FILLED, reduce_only=True),
             ],
         )
-        venue = VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)
+        venue = VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)
         scanner = _SequenceScanner(
             [
                 {
@@ -273,7 +273,7 @@ class TestFundingArbService:
             scanner=scanner,
             open_workflow=OpenPositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
             close_workflow=ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
-            venues={"binance": VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
+            venues={"binance": VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
             manager=LiveExchangeManager({}),
             pipeline=OpportunityPipeline(repository=_MemoryRepository()),
         )
@@ -319,7 +319,7 @@ class TestFundingArbService:
             scanner=scanner,
             open_workflow=OpenPositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
             close_workflow=ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
-            venues={"binance": VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
+            venues={"binance": VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
             manager=LiveExchangeManager({}),
             pipeline=OpportunityPipeline(repository=repository),
         )
@@ -431,7 +431,7 @@ class TestFundingArbService:
             scanner=scanner,
             open_workflow=OpenPositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
             close_workflow=ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
-            venues={"binance": VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
+            venues={"binance": VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
             manager=LiveExchangeManager({}),
             pipeline=OpportunityPipeline(repository=repository),
         )
@@ -483,7 +483,7 @@ class TestFundingArbService:
                 executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep)),
             ),
             close_workflow=ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
-            venues={"binance": VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
+            venues={"binance": VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
             manager=LiveExchangeManager({}),
             pipeline=OpportunityPipeline(),
             strategy=strategy,

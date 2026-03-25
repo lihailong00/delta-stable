@@ -25,7 +25,7 @@ from arb.workflows.enums import OpenPositionStatus
 
 
 @dataclass(slots=True, frozen=True)
-class VenueClients:
+class VenueClientBundle:
     """单个交易所开仓所需的客户端与风控上下文。"""
 
     # 交易所标识，例如 binance / okx。
@@ -59,7 +59,7 @@ class OpenPositionRequest:
     # 永续腿参考价格。
     perp_price: Decimal
     # 可用交易所客户端映射。
-    venue_clients: Mapping[str, VenueClients]
+    venue_clients: Mapping[str, VenueClientBundle]
     # 首选交易所。
     preferred_exchange: str
     # 资金费率对应的周期，用于归一化收益判断。
@@ -103,7 +103,7 @@ class CrossExchangeOpenRequest:
     # 做空腿参考价格。
     short_price: Decimal
     # 可用交易所客户端映射。
-    venue_clients: Mapping[str, VenueClients]
+    venue_clients: Mapping[str, VenueClientBundle]
     # maker 手续费率。
     maker_fee_rate: Decimal = Decimal("0")
     # taker 手续费率。
@@ -148,7 +148,7 @@ class OpenPositionWorkflow:
         executor: PairExecutor | None = None,
         router: ExecutionRouter | None = None,
         route_planner: WorkflowRoutePlanner | None = None,
-        venue_resolver: VenueResolver[VenueClients] | None = None,
+        venue_resolver: VenueResolver[VenueClientBundle] | None = None,
         clock: ClockFn | None = None,
     ) -> None:
         self.strategy = strategy or SpotPerpStrategy()

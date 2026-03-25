@@ -18,7 +18,7 @@ from arb.models import MarketType, Order, OrderStatus, Side
 from arb.risk.killswitch import KillSwitch
 from arb.workflows.components import RoutePlanningRequest
 from arb.workflows.close_position import ClosePositionRequest, ClosePositionWorkflow
-from arb.workflows.open_position import VenueClients
+from arb.workflows.open_position import VenueClientBundle
 
 
 async def _sleep(_: float) -> None:
@@ -139,14 +139,14 @@ class _VenueResolver:
 
     def resolve(
         self,
-        venue_clients: Mapping[str, VenueClients],
+        venue_clients: Mapping[str, VenueClientBundle],
         exchange: str,
-    ) -> VenueClients | None:
+    ) -> VenueClientBundle | None:
         normalized_exchange = self.target if exchange == self.alias else exchange
         return venue_clients.get(normalized_exchange)
 
 
-def _request(*, venue: VenueClients, **kwargs: object) -> ClosePositionRequest:
+def _request(*, venue: VenueClientBundle, **kwargs: object) -> ClosePositionRequest:
     defaults: dict[str, object] = {
         "funding_rate": Decimal("-0.0001"),
         "min_expected_rate": Decimal("0"),
@@ -181,7 +181,7 @@ class TestClosePositionWorkflow:
             orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.BUY, quantity="1", price="100.2", order_id="perp-close", status=OrderStatus.FILLED, filled_quantity="1", reduce_only=True)],
             fetched_orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.BUY, quantity="1", price="100.2", order_id="perp-close", status=OrderStatus.FILLED, filled_quantity="1", reduce_only=True)],
         )
-        venue = VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)
+        venue = VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)
         workflow = ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep)))
 
         result = await workflow.execute(_request(venue=venue))
@@ -198,7 +198,7 @@ class TestClosePositionWorkflow:
             orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.BUY, quantity="1", price="100.3", order_id="perp-close", status=OrderStatus.FILLED, filled_quantity="1", reduce_only=True)],
             fetched_orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.BUY, quantity="1", price="100.3", order_id="perp-close", status=OrderStatus.FILLED, filled_quantity="1", reduce_only=True)],
         )
-        venue = VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)
+        venue = VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)
         kill_switch = KillSwitch()
         kill_switch.enable_reduce_only("manual")
         workflow = ClosePositionWorkflow(
@@ -234,7 +234,7 @@ class TestClosePositionWorkflow:
                 _order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.BUY, quantity="1", price="100.3", order_id="perp-attempt-2", status=OrderStatus.FILLED, filled_quantity="1", reduce_only=True),
             ],
         )
-        venue = VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)
+        venue = VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)
         workflow = ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep)))
 
         result = await workflow.execute(_request(venue=venue, max_retries=1))
@@ -252,7 +252,7 @@ class TestClosePositionWorkflow:
             orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.BUY, quantity="1", price="100.2", order_id="perp-close", status=OrderStatus.NEW, filled_quantity="0", reduce_only=True)],
             fetched_orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.BUY, quantity="1", price="100.2", order_id="perp-close", status=OrderStatus.PARTIALLY_FILLED, filled_quantity="0.1", reduce_only=True)],
         )
-        venue = VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)
+        venue = VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)
         workflow = ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep)))
 
         result = await workflow.execute(_request(venue=venue, max_retries=0))
@@ -270,7 +270,7 @@ class TestClosePositionWorkflow:
             orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.BUY, quantity="1", price="100.3", order_id="perp-close", status=OrderStatus.FILLED, filled_quantity="1", reduce_only=True)],
             fetched_orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.BUY, quantity="1", price="100.3", order_id="perp-close", status=OrderStatus.FILLED, filled_quantity="1", reduce_only=True)],
         )
-        venue = VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)
+        venue = VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)
         route_planner = _RoutePlanner(exchange="synthetic-binance", mode=RouteMode.TAKER)
         venue_resolver = _VenueResolver(alias="synthetic-binance", target="binance")
         workflow = ClosePositionWorkflow(

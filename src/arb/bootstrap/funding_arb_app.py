@@ -22,7 +22,7 @@ from arb.runtime.schemas import ActiveFundingArb
 from arb.scanner.funding_scanner import FundingScanner
 from arb.schemas.base import SerializableValue
 from arb.storage import Database, Repository
-from arb.workflows import ClosePositionWorkflow, OpenPositionWorkflow, VenueClients
+from arb.workflows import ClosePositionWorkflow, OpenPositionWorkflow, VenueClientBundle
 
 
 def _status_name(service: FundingArbService) -> str:
@@ -72,7 +72,7 @@ class FundingArbApp:
 def build_funding_arb_app(
     *,
     runtimes: Mapping[str, LiveRuntimeProtocol],
-    venues: Mapping[str, VenueClients],
+    venues: Mapping[str, VenueClientBundle],
     repository: Repository | None = None,
     database_path: str | Path | None = None,
     min_net_rate: Decimal = Decimal("0.0001"),

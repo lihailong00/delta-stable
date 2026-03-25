@@ -20,7 +20,7 @@ from arb.runtime.realtime_scanner import RealtimeScanner
 from arb.runtime.supervisor import RuntimeSupervisor
 from arb.scanner.funding_scanner import FundingScanner
 from arb.workflows.close_position import ClosePositionWorkflow
-from arb.workflows.open_position import OpenPositionWorkflow, VenueClients
+from arb.workflows.open_position import OpenPositionWorkflow, VenueClientBundle
 from tests.factories import build_market_snapshot
 
 
@@ -151,7 +151,7 @@ async def test_funding_arb_e2e_signal_to_open_and_close() -> None:
         scanner=scanner,
         open_workflow=OpenPositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
         close_workflow=ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
-        venues={"binance": VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
+        venues={"binance": VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
         manager=manager,
         pipeline=OpportunityPipeline(repository=repository),
     )
@@ -191,7 +191,7 @@ async def test_supervisor_recovers_iteration_failure_and_runs_service() -> None:
         scanner=scanner,
         open_workflow=OpenPositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
         close_workflow=ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
-        venues={"binance": VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
+        venues={"binance": VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
         manager=manager,
         pipeline=OpportunityPipeline(repository=repository),
     )

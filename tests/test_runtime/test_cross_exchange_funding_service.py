@@ -14,7 +14,7 @@ from arb.execution.executor import PairExecutor
 from arb.execution.order_tracker import OrderTracker
 from arb.models import MarketType, Order, OrderStatus, Side
 from arb.runtime import CrossExchangeFundingService, LiveExchangeManager, OpportunityPipeline, ScanTarget
-from arb.workflows import ClosePositionWorkflow, OpenPositionWorkflow, VenueClients
+from arb.workflows import ClosePositionWorkflow, OpenPositionWorkflow, VenueClientBundle
 
 
 async def _sleep(_: float) -> None:
@@ -168,8 +168,8 @@ async def test_cross_exchange_service_opens_then_closes() -> None:
         ],
     )
     venues = {
-        "okx": VenueClients(exchange="okx", spot_client=okx_client, perp_client=okx_client),
-        "binance": VenueClients(exchange="binance", spot_client=binance_client, perp_client=binance_client),
+        "okx": VenueClientBundle(exchange="okx", spot_client=okx_client, perp_client=okx_client),
+        "binance": VenueClientBundle(exchange="binance", spot_client=binance_client, perp_client=binance_client),
     }
     service = CrossExchangeFundingService(
         manager=manager,

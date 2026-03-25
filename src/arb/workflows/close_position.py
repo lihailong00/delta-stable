@@ -19,7 +19,7 @@ from arb.workflows.components import (
     VenueResolver,
     WorkflowRoutePlanner,
 )
-from arb.workflows.open_position import VenueClients
+from arb.workflows.open_position import VenueClientBundle
 from arb.workflows.enums import ClosePositionStatus
 
 
@@ -42,7 +42,7 @@ class ClosePositionRequest:
     # 当前永续参考价格，通常用于生成买回报价。
     perp_price: Decimal
     # 各交易所的客户端集合，供工作流根据路由结果取用。
-    venue_clients: Mapping[str, VenueClients]
+    venue_clients: Mapping[str, VenueClientBundle]
     # 首选执行交易所。
     preferred_exchange: str
     # 首选交易所不可用时的备选交易所。
@@ -96,7 +96,7 @@ class CrossExchangeCloseRequest:
     # 空头腿参考价格。
     short_price: Decimal
     # 可用交易所客户端映射。
-    venue_clients: Mapping[str, VenueClients]
+    venue_clients: Mapping[str, VenueClientBundle]
     # 平仓原因。
     close_reason: str | None = None
     # maker 手续费率。
@@ -146,7 +146,7 @@ class ClosePositionWorkflow:
         executor: PairExecutor | None = None,
         router: ExecutionRouter | None = None,
         route_planner: WorkflowRoutePlanner | None = None,
-        venue_resolver: VenueResolver[VenueClients] | None = None,
+        venue_resolver: VenueResolver[VenueClientBundle] | None = None,
         risk_checker: RiskChecker | None = None,
         kill_switch: KillSwitch | None = None,
     ) -> None:
