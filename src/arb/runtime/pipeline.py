@@ -10,6 +10,7 @@ from typing import Protocol
 from arb.market.schemas import MarketSnapshot, coerce_market_snapshot
 from arb.models import Fill, FundingRate, MarketType, Order, Position, Ticker
 from arb.monitoring.metrics import MetricsRegistry
+from arb.runtime.enums import WorkflowStatus
 from arb.scanner.funding_scanner import FundingOpportunity
 from arb.storage.repository import Repository
 from arb.storage.schemas import StoredWorkflowStateRow
@@ -124,7 +125,7 @@ class OpportunityPipeline:
         workflow_type: str,
         exchange: str,
         symbol: str,
-        status: str,
+        status: WorkflowStatus | str,
         payload: Mapping[str, SerializableValue] | None = None,
     ) -> None:
         """记录 workflow 当前状态。

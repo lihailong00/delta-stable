@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -13,6 +14,7 @@ from arb.market.schemas import MarketSnapshot, coerce_market_snapshot
 from arb.models import MarketType, Position, PositionDirection
 from arb.risk.checks import RiskAlert
 from arb.risk.position_monitor import PositionMonitor, PositionMonitorDecision
+from arb.runtime.enums import WorkflowStatus
 from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
 from arb.runtime.pipeline import OpportunityPipeline
 from arb.runtime.realtime_scanner import RealtimeScanner
@@ -22,6 +24,7 @@ from arb.schemas.base import SerializableValue
 from arb.strategy.engine import StrategyAction, StrategyState
 from arb.strategy.spot_perp import SpotPerpInputs, SpotPerpStrategy
 from arb.workflows.close_position import ClosePositionRequest, ClosePositionResult, ClosePositionWorkflow
+from arb.workflows.enums import ClosePositionStatus, OpenPositionStatus
 from arb.workflows.open_position import OpenPositionRequest, OpenPositionResult, OpenPositionWorkflow, VenueClients
 
 
@@ -29,6 +32,18 @@ def _utc_now() -> datetime:
     """返回当前 UTC 时间，保证服务内部的时间基准一致。"""
 
     return datetime.now(tz=timezone.utc)
+
+
+@dataclass(slots=True, frozen=True)
+class MonitorStateSignature:
+    """监控状态缓存签名。
+
+    用于判断某个 workflow 的监控状态是否真的发生变化，
+    从而避免在 `run_once()` 的每一轮里重复写相同的 workflow 状态。
+    """
+
+    status: WorkflowStatus
+    alert_reasons: tuple[str, ...] = ()
 
 
 class FundingArbService:
@@ -65,7 +80,7 @@ class FundingArbService:
         # 当前由服务维护的活跃资金费率套利头寸，key 采用【策略名+交易所+标的】拼接。
         self.active_positions: dict[str, ActiveFundingArb] = {}
         # 缓存最近一次已写入的监控状态，避免每轮都重复写相同的 workflow 状态。
-        self._monitor_state_signatures: dict[str, tuple[str, tuple[str, ...]]] = {}
+        self._monitor_state_signatures: dict[str, MonitorStateSignature] = {}
 
     async def run_once(
         self,
@@ -128,11 +143,11 @@ class FundingArbService:
                 )
                 closed.append(close_result)
                 # 完全平仓后才释放槽位并移出活跃集合；部分减仓则继续保留在监控列表里。
-                if close_result.status == "closed":
+                if close_result.status == ClosePositionStatus.CLOSED:
                     del self.active_positions[key]
                     self.manager.release_slot(key)
                     self._monitor_state_signatures.pop(position.workflow_id, None)
-                elif close_result.status == "reduced":
+                elif close_result.status == ClosePositionStatus.REDUCED:
                     self.active_positions[key] = position.model_copy(
                         update={
                             "spot_quantity": close_result.remaining_spot_quantity,
@@ -165,11 +180,11 @@ class FundingArbService:
                 continue
             close_result = await self._close_position(position, snapshot, reason=decision.reason)
             closed.append(close_result)
-            if close_result.status == "closed":
+            if close_result.status == ClosePositionStatus.CLOSED:
                 del self.active_positions[key]
                 self.manager.release_slot(key)
                 self._monitor_state_signatures.pop(position.workflow_id, None)
-            elif close_result.status == "reduced":
+            elif close_result.status == ClosePositionStatus.REDUCED:
                 self.active_positions[key] = position.model_copy(
                     update={
                         "spot_quantity": close_result.remaining_spot_quantity,
@@ -200,7 +215,7 @@ class FundingArbService:
                 continue
             open_result = await self._open_position(opportunity, snapshot, current_time)
             opened.append(open_result)
-            if open_result.status == "opened":
+            if open_result.status == OpenPositionStatus.OPENED:
                 # 默认使用配置的目标下单数量；若执行结果里带有真实成交量，则以真实成交量为准。
                 spot_quantity = self.position_quantity
                 perp_quantity = self.position_quantity
@@ -222,7 +237,7 @@ class FundingArbService:
                     route=open_result.route,
                     state=StrategyState(is_open=True, opened_at=current_time, hedge_ratio=Decimal("1")),
                 )
-                self._monitor_state_signatures[key] = ("open", ())
+                self._monitor_state_signatures[key] = MonitorStateSignature(status=WorkflowStatus.OPEN)
             else:
                 # 开仓未成功时不能占用名额，避免后续标的被错误阻塞。
                 self.manager.release_slot(key)
@@ -253,7 +268,7 @@ class FundingArbService:
             workflow_type=self.strategy_name,
             exchange=opportunity.exchange,
             symbol=opportunity.symbol,
-            status="opening",
+            status=WorkflowStatus.OPENING,
             payload={"net_rate": str(opportunity.net_rate)},
         )
         result = await self.open_workflow.execute(
@@ -278,10 +293,10 @@ class FundingArbService:
             workflow_type=self.strategy_name,
             exchange=opportunity.exchange,
             symbol=opportunity.symbol,
-            status="open" if result.status == "opened" else result.status,
+            status=WorkflowStatus.OPEN if result.status == OpenPositionStatus.OPENED else result.status,
             payload={"reason": result.reason, "attempts": result.attempts, "opened_at": now.isoformat()},
         )
-        if result.execution is not None and result.status == "opened":
+        if result.execution is not None and result.status == OpenPositionStatus.OPENED:
             # 只有真正有执行结果且开仓成功时，才记录订单/成交和持仓对。
             self._persist_execution(result.execution)
             self._persist_position_pair(
@@ -317,7 +332,7 @@ class FundingArbService:
             workflow_type=self.strategy_name,
             exchange=position.exchange,
             symbol=position.symbol,
-            status="closing",
+            status=WorkflowStatus.CLOSING,
             payload=closing_payload,
         )
         result = await self.close_workflow.execute(
@@ -364,7 +379,7 @@ class FundingArbService:
             status=result.status,
             payload=closed_payload,
         )
-        if result.execution is not None and result.status == "closed":
+        if result.execution is not None and result.status == ClosePositionStatus.CLOSED:
             # 完全平仓后，同时记录实际执行和“数量归零”的持仓快照。
             self._persist_execution(result.execution)
             self._persist_position_pair(
@@ -375,7 +390,7 @@ class FundingArbService:
                 spot_entry=snapshot.ticker.bid,
                 perp_entry=snapshot.ticker.ask,
             )
-        elif result.execution is not None and result.status == "reduced":
+        elif result.execution is not None and result.status == ClosePositionStatus.REDUCED:
             # 部分减仓时保留剩余数量，后续 run_once 会继续监控残余风险。
             self._persist_execution(result.execution)
             self._persist_position_pair(
@@ -395,9 +410,10 @@ class FundingArbService:
     ) -> None:
         """把当前持仓的风险监控结果写回 workflow 状态，便于外部观测。"""
 
-        alert_reasons = tuple(sorted(str(alert.reason) for alert in decision.alerts))
-        status = "warning" if decision.alerts else "open"
-        signature = (status, alert_reasons)
+        signature = MonitorStateSignature(
+            status=WorkflowStatus.WARNING if decision.alerts else WorkflowStatus.OPEN,
+            alert_reasons=tuple(sorted(str(alert.reason) for alert in decision.alerts)),
+        )
         if self._monitor_state_signatures.get(position.workflow_id) == signature:
             return
         self.pipeline.record_workflow_state(
@@ -405,7 +421,7 @@ class FundingArbService:
             workflow_type=self.strategy_name,
             exchange=position.exchange,
             symbol=position.symbol,
-            status=status,
+            status=signature.status,
             payload={
                 "opened_at": position.opened_at.isoformat(),
                 **self._monitor_alert_payload(decision.alerts),

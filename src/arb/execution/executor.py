@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
+from enum import StrEnum
 
 from arb.execution.guards import GuardContext, PreTradeGuards
 from arb.execution.order_tracker import OrderTrackResult, OrderTracker
@@ -23,9 +24,17 @@ class ExecutionLeg:
     context: GuardContext | None = None
 
 
+class ExecutionStatus(StrEnum):
+    PENDING = "pending"
+    FAILED = "failed"
+    ADJUSTED = "adjusted"
+    FILLED = "filled"
+    PARTIAL = "partial"
+
+
 @dataclass(slots=True)
 class ExecutionResult:
-    status: str
+    status: ExecutionStatus
     orders: list[Order] = field(default_factory=list)
     fills: list[Fill] = field(default_factory=list)
     adjustments: list[Order] = field(default_factory=list)
@@ -49,7 +58,7 @@ class PairExecutor:
         self._validate_leg(first_leg)
         self._validate_leg(second_leg)
 
-        result = ExecutionResult(status="pending")
+        result = ExecutionResult(status=ExecutionStatus.PENDING)
         try:
             first_order = await self._submit(first_leg)
             second_order = await self._submit(second_leg)
@@ -57,7 +66,7 @@ class PairExecutor:
             if "first_order" in locals():
                 await self._rollback(first_leg, first_order)
                 result.rollback_performed = True
-            result.status = "failed"
+            result.status = ExecutionStatus.FAILED
             result.reason = str(exc)
             return result
 
@@ -77,17 +86,17 @@ class PairExecutor:
         result.fills = [*first_tracked.fills, *second_tracked.fills]
 
         if self._tracking_failed(first_tracked, second_tracked):
-            result.status = "failed"
+            result.status = ExecutionStatus.FAILED
             result.reason = "order tracking timeout"
             return result
 
         result.adjustments = await self.reconcile_partial_fill(first_leg, second_leg, result.orders)
         if result.adjustments:
-            result.status = "adjusted"
+            result.status = ExecutionStatus.ADJUSTED
         elif all(order.status is OrderStatus.FILLED or order.filled_quantity >= order.quantity for order in result.orders):
-            result.status = "filled"
+            result.status = ExecutionStatus.FILLED
         else:
-            result.status = "partial"
+            result.status = ExecutionStatus.PARTIAL
         return result
 
     async def reconcile_partial_fill(

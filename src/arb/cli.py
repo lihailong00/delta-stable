@@ -9,6 +9,7 @@ import typer
 
 from arb.bootstrap.schemas import CliParsedResult, CliResult, CommandHandlerMap, cli_args_to_serializable
 from arb.cli_support import invoke_typer_app
+from arb.models import MarketType
 
 _OPTION_NAMES = {
     "--exchange",
@@ -80,7 +81,7 @@ def build_app(
     def live_scan(
         exchange: Annotated[list[str], typer.Option("--exchange")],
         symbol: Annotated[list[str], typer.Option("--symbol")],
-        market_type: Annotated[str, typer.Option("--market-type")] = "perpetual",
+        market_type: Annotated[MarketType, typer.Option("--market-type")] = MarketType.PERPETUAL,
         iterations: Annotated[int, typer.Option("--iterations")] = 1,
         dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     ) -> CliResult:
@@ -106,7 +107,7 @@ def build_app(
     def funding_arb(
         exchange: Annotated[list[str], typer.Option("--exchange")],
         symbol: Annotated[list[str], typer.Option("--symbol")],
-        market_type: Annotated[str, typer.Option("--market-type")] = "perpetual",
+        market_type: Annotated[MarketType, typer.Option("--market-type")] = MarketType.PERPETUAL,
         iterations: Annotated[int, typer.Option("--iterations")] = 1,
     ) -> CliResult:
         return dispatch(
@@ -123,7 +124,7 @@ def build_app(
     def funding_arb_dry_run(
         exchange: Annotated[list[str], typer.Option("--exchange")],
         symbol: Annotated[list[str], typer.Option("--symbol")],
-        market_type: Annotated[str, typer.Option("--market-type")] = "perpetual",
+        market_type: Annotated[MarketType, typer.Option("--market-type")] = MarketType.PERPETUAL,
         iterations: Annotated[int, typer.Option("--iterations")] = 1,
     ) -> CliResult:
         return dispatch(

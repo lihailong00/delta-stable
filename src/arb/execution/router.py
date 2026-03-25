@@ -4,13 +4,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from enum import StrEnum
 
 from arb.models import Side
 
 
+class RouteMode(StrEnum):
+    MAKER = "maker"
+    TAKER = "taker"
+
+
 @dataclass(slots=True, frozen=True)
 class RouteDecision:
-    mode: str
+    mode: RouteMode
     exchange: str
     urgent: bool = False
 
@@ -25,10 +31,10 @@ class ExecutionRouter:
         maker_fee_rate: Decimal,
         taker_fee_rate: Decimal,
         spread_bps: Decimal,
-    ) -> str:
+    ) -> RouteMode:
         if urgent or spread_bps <= Decimal("1"):
-            return "taker"
-        return "maker" if maker_fee_rate <= taker_fee_rate else "taker"
+            return RouteMode.TAKER
+        return RouteMode.MAKER if maker_fee_rate <= taker_fee_rate else RouteMode.TAKER
 
     def choose_exchange(
         self,
@@ -72,10 +78,10 @@ class ExecutionRouter:
         *,
         reference_price: Decimal,
         side: str | Side,
-        mode: str,
+        mode: RouteMode | str,
         max_slippage_bps: Decimal = Decimal("0"),
     ) -> Decimal:
-        if mode == "maker" or max_slippage_bps <= 0:
+        if mode == RouteMode.MAKER or max_slippage_bps <= 0:
             return reference_price
         multiplier = Decimal("1") + (max_slippage_bps / Decimal("10000"))
         normalized_side = Side(str(side).lower())
@@ -86,12 +92,12 @@ class ExecutionRouter:
     def should_escalate_to_taker(
         self,
         *,
-        current_mode: str,
+        current_mode: RouteMode | str,
         elapsed_seconds: float,
         max_naked_seconds: float,
     ) -> bool:
         return (
-            current_mode != "taker"
+            current_mode != RouteMode.TAKER
             and max_naked_seconds > 0
             and elapsed_seconds >= max_naked_seconds
         )

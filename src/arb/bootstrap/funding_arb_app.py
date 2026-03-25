@@ -11,9 +11,11 @@ from uuid import uuid4
 
 from arb.bootstrap.schemas import CommandHandlerMap, FundingArbCliArgs, FundingArbRunReport, to_serializable
 from arb.control import ApiContext, CommandDispatcher, ControlAPI, ControlCommand
+from arb.control.enums import CommandStatus, ControlAction
 from arb.control.schemas import CommandRequest, CommandResponse, PositionResponse, StrategyResponse, WorkflowResponse
 from arb.execution import OrderTracker, PairExecutor
 from arb.models import MarketType
+from arb.runtime.enums import ServiceStatus, WorkflowStatus
 from arb.runtime import FundingArbService, LiveExchangeManager, OpportunityPipeline, RealtimeScanner, ScanTarget
 from arb.runtime.protocols import LiveRuntimeProtocol
 from arb.runtime.schemas import ActiveFundingArb
@@ -24,7 +26,7 @@ from arb.workflows import ClosePositionWorkflow, OpenPositionWorkflow, VenueClie
 
 
 def _status_name(service: FundingArbService) -> str:
-    return "running" if service.active_positions else "idle"
+    return ServiceStatus.RUNNING if service.active_positions else ServiceStatus.IDLE
 
 
 @dataclass(slots=True)
@@ -97,7 +99,12 @@ def build_funding_arb_app(
     )
     dispatcher = CommandDispatcher(
         _default_command_handler,
-        confirmation_actions={"manual_open", "manual_close", "close_all", "cancel_workflow"},
+        confirmation_actions={
+            ControlAction.MANUAL_OPEN,
+            ControlAction.MANUAL_CLOSE,
+            ControlAction.CLOSE_ALL,
+            ControlAction.CANCEL_WORKFLOW,
+        },
     )
     context = ApiContext(
         positions_provider=lambda: _positions_payload(service),
@@ -154,7 +161,7 @@ def _workflows_payload(service: FundingArbService) -> list[WorkflowResponse]:
             workflow_type=service.strategy_name,
             exchange=position.exchange,
             symbol=position.symbol,
-            status="open",
+            status=WorkflowStatus.OPEN,
             payload={"opened_at": position.opened_at.isoformat()},
         )
         for position in service.active_positions.values()
@@ -174,4 +181,4 @@ def _command_from_payload(payload: CommandRequest | Mapping[str, SerializableVal
 
 
 def _default_command_handler(command: ControlCommand) -> CommandResponse:
-    return CommandResponse(accepted=True, status="queued", command_id=command.command_id)
+    return CommandResponse(accepted=True, status=CommandStatus.QUEUED, command_id=command.command_id)

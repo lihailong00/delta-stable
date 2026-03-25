@@ -9,6 +9,7 @@ from pydantic import ConfigDict, Field
 
 from arb.market.schemas import MarketSnapshot
 from arb.portfolio.reconciler import ReconciliationReport
+from arb.runtime.enums import WorkflowStatus
 from arb.scanner.funding_scanner import FundingOpportunity
 from arb.schemas.base import ArbFrozenModel, ArbModel, SerializableValue
 from arb.strategy.engine import StrategyState
@@ -77,7 +78,7 @@ class WorkflowStateRecord(ArbFrozenModel):
     workflow_type: str
     exchange: str
     symbol: str
-    status: str
+    status: WorkflowStatus
     payload: dict[str, SerializableValue] = Field(default_factory=dict)
     updated_at: str | None = None
 

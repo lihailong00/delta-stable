@@ -10,6 +10,7 @@ from pydantic import ConfigDict
 
 from arb.control.commands import ControlCommand
 from arb.control.deps import ApiContext
+from arb.control.enums import CommandStatus, ControlAction
 from arb.control.dispatcher import CommandDispatcher
 from arb.control.schemas import (
     CommandRequest,
@@ -20,6 +21,7 @@ from arb.control.schemas import (
     WorkflowResponse,
 )
 from arb.models import MarketType
+from arb.runtime.enums import WorkflowStatus
 from arb.runtime.schemas import ActiveFundingArb, RecoveryPlan, WorkflowStateRecord
 from arb.schemas.base import ArbModel, SerializableValue
 from arb.storage.schemas import StoredOrderRow, StoredWorkflowStateRow
@@ -132,7 +134,7 @@ class ServiceBridge:
                 workflow_type=self.service.strategy_name,
                 exchange=item.exchange,
                 symbol=item.symbol,
-                status="manual_open_pending",
+                status=WorkflowStatus.MANUAL_OPEN_PENDING,
                 payload={"quantity": str(item.quantity), "requested_by": item.requested_by},
             )
             for item in self.pending_manual_opens.values()
@@ -168,22 +170,22 @@ class ServiceBridge:
         )
 
     def handle_command(self, command: ControlCommand) -> CommandResponse:
-        if command.action == "manual_open":
+        if command.action == ControlAction.MANUAL_OPEN:
             return self.manual_open(command)
-        if command.action == "manual_close":
+        if command.action == ControlAction.MANUAL_CLOSE:
             return self.manual_close(command)
-        if command.action == "cancel_workflow":
+        if command.action == ControlAction.CANCEL_WORKFLOW:
             return self.cancel_workflow(command)
-        if command.action == "close_all":
+        if command.action == ControlAction.CLOSE_ALL:
             return self.close_all(command)
-        return CommandResponse(accepted=False, status="unsupported", command_id=command.command_id)
+        return CommandResponse(accepted=False, status=CommandStatus.UNSUPPORTED, command_id=command.command_id)
 
     def manual_open(self, command: ControlCommand) -> CommandResponse:
         exchange, symbol = self._split_exchange_symbol(command.target)
         workflow_id = self._workflow_id(exchange, symbol)
         quantity = Decimal(str(command.payload.get("quantity", self.service.position_quantity)))
         if not self.service.manager.acquire_slot(f"{exchange}:{symbol}"):  # type: ignore[attr-defined]
-            return CommandResponse(accepted=False, status="slot_busy", command_id=command.command_id)
+            return CommandResponse(accepted=False, status=CommandStatus.SLOT_BUSY, command_id=command.command_id)
         self.pending_manual_opens[workflow_id] = PendingManualOpen(
             workflow_id=workflow_id,
             exchange=exchange,
@@ -195,10 +197,10 @@ class ServiceBridge:
             workflow_id=workflow_id,
             exchange=exchange,
             symbol=symbol,
-            status="manual_open_pending",
+            status=WorkflowStatus.MANUAL_OPEN_PENDING,
             payload={"quantity": str(quantity), "requested_by": command.requested_by},
         )
-        return CommandResponse(accepted=True, status="queued", command_id=command.command_id)
+        return CommandResponse(accepted=True, status=CommandStatus.QUEUED, command_id=command.command_id)
 
     def manual_close(self, command: ControlCommand) -> CommandResponse:
         workflow_id = self._normalize_workflow_id(command.target)
@@ -210,10 +212,10 @@ class ServiceBridge:
             workflow_id=workflow_id,
             exchange=position.exchange,
             symbol=position.symbol,
-            status="manual_close_requested",
+            status=WorkflowStatus.MANUAL_CLOSE_REQUESTED,
             payload={"requested_by": command.requested_by},
         )
-        return CommandResponse(accepted=True, status="queued", command_id=command.command_id)
+        return CommandResponse(accepted=True, status=CommandStatus.QUEUED, command_id=command.command_id)
 
     def cancel_workflow(self, command: ControlCommand) -> CommandResponse:
         workflow_id = self._normalize_workflow_id(command.target)
@@ -225,10 +227,10 @@ class ServiceBridge:
             workflow_id=workflow_id,
             exchange=pending.exchange,
             symbol=pending.symbol,
-            status="canceled",
+            status=WorkflowStatus.CANCELED,
             payload={"requested_by": command.requested_by},
         )
-        return CommandResponse(accepted=True, status="canceled", command_id=command.command_id)
+        return CommandResponse(accepted=True, status=CommandStatus.CANCELED, command_id=command.command_id)
 
     def close_all(self, command: ControlCommand) -> CommandResponse:
         for workflow_id, position in list(self.service.active_positions.items()):
@@ -238,10 +240,10 @@ class ServiceBridge:
                 workflow_id=workflow_id,
                 exchange=position.exchange,
                 symbol=position.symbol,
-                status="manual_close_requested",
+                status=WorkflowStatus.MANUAL_CLOSE_REQUESTED,
                 payload={"requested_by": command.requested_by, "scope": "all"},
             )
-        return CommandResponse(accepted=True, status="queued", command_id=command.command_id)
+        return CommandResponse(accepted=True, status=CommandStatus.QUEUED, command_id=command.command_id)
 
     def _save_workflow_state(
         self,
@@ -249,7 +251,7 @@ class ServiceBridge:
         workflow_id: str,
         exchange: str,
         symbol: str,
-        status: str,
+        status: WorkflowStatus | str,
         payload: dict[str, SerializableValue],
     ) -> None:
         if self.repository is None:

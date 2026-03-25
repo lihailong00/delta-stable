@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from enum import StrEnum
 
 from arb.strategy.engine import StrategyAction, StrategyDecision, StrategyState
 
@@ -19,6 +20,14 @@ class PerpSpreadInputs:
     short_price: Decimal
     long_quantity: Decimal = Decimal("0")
     short_quantity: Decimal = Decimal("0")
+
+
+class PerpSpreadReason(StrEnum):
+    SPREAD_ABOVE_THRESHOLD = "spread_above_threshold"
+    NO_OPEN_SIGNAL = "no_open_signal"
+    SPREAD_COMPRESSED = "spread_compressed"
+    HEDGE_RATIO_DRIFT = "hedge_ratio_drift"
+    SPREAD_HEALTHY = "spread_healthy"
 
 
 class PerpSpreadStrategy:
@@ -59,21 +68,21 @@ class PerpSpreadStrategy:
             if spread >= self.min_spread_rate:
                 return StrategyDecision(
                     StrategyAction.OPEN,
-                    reason="spread_above_threshold",
+                    reason=PerpSpreadReason.SPREAD_ABOVE_THRESHOLD,
                     target_hedge_ratio=Decimal("1"),
                     metadata={"symbol": inputs.symbol},
                 )
-            return StrategyDecision(StrategyAction.HOLD, reason="no_open_signal", metadata={"symbol": inputs.symbol})
+            return StrategyDecision(StrategyAction.HOLD, reason=PerpSpreadReason.NO_OPEN_SIGNAL, metadata={"symbol": inputs.symbol})
 
         if spread <= self.close_spread_rate:
-            return StrategyDecision(StrategyAction.CLOSE, reason="spread_compressed", metadata={"symbol": inputs.symbol})
+            return StrategyDecision(StrategyAction.CLOSE, reason=PerpSpreadReason.SPREAD_COMPRESSED, metadata={"symbol": inputs.symbol})
 
         if hedge_ratio and abs(Decimal("1") - hedge_ratio) > self.rebalance_threshold:
             return StrategyDecision(
                 StrategyAction.REBALANCE,
-                reason="hedge_ratio_drift",
+                reason=PerpSpreadReason.HEDGE_RATIO_DRIFT,
                 target_hedge_ratio=Decimal("1"),
                 metadata={"symbol": inputs.symbol},
             )
 
-        return StrategyDecision(StrategyAction.HOLD, reason="spread_healthy", target_hedge_ratio=hedge_ratio or Decimal("1"), metadata={"symbol": inputs.symbol})
+        return StrategyDecision(StrategyAction.HOLD, reason=PerpSpreadReason.SPREAD_HEALTHY, target_hedge_ratio=hedge_ratio or Decimal("1"), metadata={"symbol": inputs.symbol})

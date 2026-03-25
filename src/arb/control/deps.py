@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from pydantic import ConfigDict
 
+from arb.control.enums import CommandStatus
 from arb.control.schemas import (
     CommandRequest,
     CommandResponse,
@@ -35,17 +36,17 @@ class ApiContext(ArbModel):
     command_handler: CommandHandler = lambda command: CommandResponse(
         accepted=True,
         command_id="cmd-1",
-        status="queued",
+        status=CommandStatus.QUEUED,
     )
     command_confirmer: CommandDecisionHandler = lambda command_id, actor: CommandResponse(
         accepted=True,
         command_id=command_id,
-        status="queued",
+        status=CommandStatus.QUEUED,
     )
     command_canceller: CommandDecisionHandler = lambda command_id, actor: CommandResponse(
         accepted=True,
         command_id=command_id,
-        status="canceled",
+        status=CommandStatus.CANCELED,
     )
     auth_token: str = "secret-token"
 

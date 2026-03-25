@@ -9,6 +9,7 @@ from typing import cast
 
 from pydantic import Field
 
+from arb.models import MarketType
 from arb.schemas.base import ArbFrozenModel, ArbModel, SerializableValue
 
 
@@ -20,7 +21,7 @@ class CliParsedResult(ArbFrozenModel):
 class FundingArbCliArgs(ArbFrozenModel):
     exchange: tuple[str, ...]
     symbol: tuple[str, ...]
-    market_type: str = "perpetual"
+    market_type: MarketType = MarketType.PERPETUAL
     iterations: int = 1
 
     @classmethod
@@ -28,7 +29,7 @@ class FundingArbCliArgs(ArbFrozenModel):
         return cls(
             exchange=_read_sequence_arg(args, "exchange"),
             symbol=_read_sequence_arg(args, "symbol"),
-            market_type=str(_read_arg(args, "market_type", "perpetual")),
+            market_type=MarketType(str(_read_arg(args, "market_type", MarketType.PERPETUAL))),
             iterations=int(_read_arg(args, "iterations", 1)),
         )
 

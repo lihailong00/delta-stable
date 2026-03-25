@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from pydantic import Field
 
+from arb.control.enums import CommandStatus, HealthStatus
 from arb.schemas.base import ArbFrozenModel, SerializableValue
 
 
 class HealthResponse(ArbFrozenModel):
-    status: str
+    status: HealthStatus
 
 
 class PositionResponse(ArbFrozenModel):
@@ -65,7 +66,7 @@ class CommandRequest(ArbFrozenModel):
 class CommandResponse(ArbFrozenModel):
     accepted: bool
     command_id: str
-    status: str
+    status: CommandStatus
 
 
 class CommandQueueSnapshot(ArbFrozenModel):

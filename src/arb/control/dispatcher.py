@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 
 from arb.control.audit import AuditLogger
 from arb.control.commands import ControlCommand
+from arb.control.enums import CommandStatus, ControlAction
 from arb.control.schemas import CommandQueueSnapshot, CommandResponse
 from arb.schemas.base import SerializableValue
 
@@ -19,12 +20,13 @@ class CommandDispatcher:
         *,
         audit: AuditLogger | None = None,
         allowed_users: set[str] | None = None,
-        confirmation_actions: set[str] | None = None,
+        confirmation_actions: set[ControlAction | str] | None = None,
     ) -> None:
         self.handler = handler
         self.audit = audit or AuditLogger()
         self.allowed_users = allowed_users or set()
-        self.confirmation_actions = confirmation_actions or {"close_all"}
+        raw_confirmation_actions = confirmation_actions or {ControlAction.CLOSE_ALL}
+        self.confirmation_actions = {str(action) for action in raw_confirmation_actions}
         self._seen_ids: set[str] = set()
         self._pending_confirmations: dict[str, ControlCommand] = {}
         self._queue: list[ControlCommand] = []
@@ -37,9 +39,9 @@ class CommandDispatcher:
                 source=command.source,
                 action=command.action,
                 target=command.target,
-                outcome="duplicate",
+                outcome=CommandStatus.DUPLICATE,
             )
-            return CommandResponse(accepted=False, status="duplicate", command_id=command.command_id)
+            return CommandResponse(accepted=False, status=CommandStatus.DUPLICATE, command_id=command.command_id)
 
         self._seen_ids.add(command.command_id)
         if command.require_confirmation or command.action in self.confirmation_actions:
@@ -49,9 +51,9 @@ class CommandDispatcher:
                 source=command.source,
                 action=command.action,
                 target=command.target,
-                outcome="pending_confirmation",
+                outcome=CommandStatus.PENDING_CONFIRMATION,
             )
-            return CommandResponse(accepted=True, status="pending_confirmation", command_id=command.command_id)
+            return CommandResponse(accepted=True, status=CommandStatus.PENDING_CONFIRMATION, command_id=command.command_id)
 
         self._queue.append(command)
         self.audit.record(
@@ -59,9 +61,9 @@ class CommandDispatcher:
             source=command.source,
             action=command.action,
             target=command.target,
-            outcome="queued",
+            outcome=CommandStatus.QUEUED,
         )
-        return CommandResponse(accepted=True, status="queued", command_id=command.command_id)
+        return CommandResponse(accepted=True, status=CommandStatus.QUEUED, command_id=command.command_id)
 
     def confirm(self, command_id: str, actor: str) -> CommandResponse:
         self._authorize(actor)
@@ -74,7 +76,7 @@ class CommandDispatcher:
             target=command.target,
             outcome="confirmed",
         )
-        return CommandResponse(accepted=True, status="queued", command_id=command_id)
+        return CommandResponse(accepted=True, status=CommandStatus.QUEUED, command_id=command_id)
 
     def cancel(self, command_id: str, actor: str) -> CommandResponse:
         self._authorize(actor)
@@ -92,9 +94,9 @@ class CommandDispatcher:
             source=command.source,
             action=command.action,
             target=command.target,
-            outcome="canceled",
+            outcome=CommandStatus.CANCELED,
         )
-        return CommandResponse(accepted=True, status="canceled", command_id=command_id)
+        return CommandResponse(accepted=True, status=CommandStatus.CANCELED, command_id=command_id)
 
     def dispatch_next(self) -> CommandResponse | None:
         if not self._queue:

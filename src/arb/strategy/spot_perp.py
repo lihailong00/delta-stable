@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from enum import StrEnum
 
 from arb.funding import DEFAULT_FUNDING_INTERVAL_HOURS
 from arb.scanner.cost_model import normalize_rate
@@ -15,6 +16,16 @@ def _utc_now() -> datetime:
     """返回当前 UTC 时间，供策略评估统一使用。"""
 
     return datetime.now(tz=timezone.utc)
+
+
+class SpotPerpReason(StrEnum):
+    FUNDING_BELOW_THRESHOLD = "funding_below_threshold"
+    BASIS_OUT_OF_RANGE = "basis_out_of_range"
+    QUOTE_ACCEPTED = "quote_accepted"
+    FUNDING_REVERSED = "funding_reversed"
+    HOLDING_PERIOD_EXCEEDED = "holding_period_exceeded"
+    HEDGE_RATIO_DRIFT = "hedge_ratio_drift"
+    POSITION_HEALTHY = "position_healthy"
 
 
 @dataclass(slots=True, frozen=True)
@@ -44,7 +55,7 @@ class EntryQuoteCheck:
     # 当前报价是否满足入场条件。
     accepted: bool
     # 判定原因，例如费率过低、基差过大或报价通过。
-    reason: str
+    reason: SpotPerpReason
     # 当前现货/永续基差，单位 bps。
     basis_bps: Decimal
     # 已统一折算后的资金费率，便于和阈值直接比较。
@@ -124,11 +135,11 @@ class SpotPerpStrategy:
         )
         # 资金费率太低时，即使结构上能对冲，也不值得开仓。
         if normalized_funding_rate < self.min_open_funding_rate:
-            return EntryQuoteCheck(False, "funding_below_threshold", basis, normalized_funding_rate)
+            return EntryQuoteCheck(False, SpotPerpReason.FUNDING_BELOW_THRESHOLD, basis, normalized_funding_rate)
         # 基差过大通常意味着冲击成本或收敛风险偏高，因此也拒绝入场。
         if abs(basis) > self.max_basis_bps:
-            return EntryQuoteCheck(False, "basis_out_of_range", basis, normalized_funding_rate)
-        return EntryQuoteCheck(True, "quote_accepted", basis, normalized_funding_rate)
+            return EntryQuoteCheck(False, SpotPerpReason.BASIS_OUT_OF_RANGE, basis, normalized_funding_rate)
+        return EntryQuoteCheck(True, SpotPerpReason.QUOTE_ACCEPTED, basis, normalized_funding_rate)
 
     def normalize_funding_rate(
         self,
@@ -202,17 +213,17 @@ class SpotPerpStrategy:
         )
         # 资金费率跌破关闭阈值时，说明继续持仓的收益基础已经消失。
         if normalized_funding_rate <= self.close_funding_rate:
-            return StrategyDecision(StrategyAction.CLOSE, reason="funding_reversed", metadata={"symbol": inputs.symbol})
+            return StrategyDecision(StrategyAction.CLOSE, reason=SpotPerpReason.FUNDING_REVERSED, metadata={"symbol": inputs.symbol})
 
         # 超过最大持仓时间时，主动退出，避免长期暴露。
         if current_state.opened_at and current_time - current_state.opened_at > self.max_holding_period:
-            return StrategyDecision(StrategyAction.CLOSE, reason="holding_period_exceeded", metadata={"symbol": inputs.symbol})
+            return StrategyDecision(StrategyAction.CLOSE, reason=SpotPerpReason.HOLDING_PERIOD_EXCEEDED, metadata={"symbol": inputs.symbol})
 
         # 对冲比例偏离过大时，建议再平衡而不是直接平仓。
         if abs(Decimal("1") - hedge_ratio) > self.rebalance_threshold:
             return StrategyDecision(
                 StrategyAction.REBALANCE,
-                reason="hedge_ratio_drift",
+                reason=SpotPerpReason.HEDGE_RATIO_DRIFT,
                 target_hedge_ratio=Decimal("1"),
                 metadata={"symbol": inputs.symbol},
             )
@@ -220,7 +231,7 @@ class SpotPerpStrategy:
         # 以上条件都未触发时，说明当前仓位仍处于健康状态。
         return StrategyDecision(
             StrategyAction.HOLD,
-            reason="position_healthy",
+            reason=SpotPerpReason.POSITION_HEALTHY,
             target_hedge_ratio=hedge_ratio,
             metadata={"symbol": inputs.symbol},
         )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from arb.models import MarketType
+from arb.runtime.enums import WorkflowStatus
 from arb.portfolio.reconciler import PortfolioReconciler
 from arb.runtime.schemas import RecoveryPlan, WorkflowStateRecord
 from arb.storage.repository import Repository
@@ -27,7 +28,11 @@ class WorkflowRecovery:
         exchange: str,
         market_type: MarketType = MarketType.PERPETUAL,
         symbol: str | None = None,
-        workflow_statuses: tuple[str, ...] = ("pending", "running", "closing"),
+        workflow_statuses: tuple[WorkflowStatus, ...] = (
+            WorkflowStatus.PENDING,
+            WorkflowStatus.RUNNING,
+            WorkflowStatus.CLOSING,
+        ),
     ) -> RecoveryPlan:
         workflows = [
             WorkflowStateRecord.model_validate(workflow.to_dict() if hasattr(workflow, "to_dict") else workflow)

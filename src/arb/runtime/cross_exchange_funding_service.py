@@ -8,11 +8,13 @@ from decimal import Decimal
 from arb.execution.executor import ExecutionResult
 from arb.market.schemas import MarketSnapshot, coerce_market_snapshot
 from arb.models import MarketType, Position, PositionDirection
+from arb.runtime.enums import WorkflowStatus
 from arb.runtime.exchange_manager import LiveExchangeManager, ScanTarget
 from arb.runtime.pipeline import OpportunityPipeline
 from arb.runtime.schemas import ActiveCrossExchangeArb, CrossExchangeOpportunity, CrossExchangeRunResult
 from arb.strategy.engine import StrategyAction, StrategyState
 from arb.strategy.perp_spread import PerpSpreadInputs, PerpSpreadStrategy
+from arb.workflows.enums import ClosePositionStatus, OpenPositionStatus
 from arb.workflows.close_position import CrossExchangeCloseRequest, ClosePositionResult, ClosePositionWorkflow
 from arb.workflows.open_position import CrossExchangeOpenRequest, OpenPositionResult, OpenPositionWorkflow, VenueClients
 
@@ -85,7 +87,7 @@ class CrossExchangeFundingService:
                 reason=decision.reason,
             )
             closed.append(close_result)
-            if close_result.status == "closed":
+            if close_result.status == ClosePositionStatus.CLOSED:
                 del self.active_positions[key]
                 self.manager.release_slot(key)
 
@@ -99,7 +101,7 @@ class CrossExchangeFundingService:
                 continue
             open_result = await self._open_position(opportunity, current_time)
             opened.append(open_result)
-            if open_result.status == "opened":
+            if open_result.status == OpenPositionStatus.OPENED:
                 self.active_positions[workflow_id] = ActiveCrossExchangeArb(
                     workflow_id=workflow_id,
                     symbol=opportunity.symbol,
@@ -133,7 +135,7 @@ class CrossExchangeFundingService:
             workflow_type=self.strategy_name,
             exchange=opportunity.short_exchange,
             symbol=opportunity.symbol,
-            status="opening",
+            status=WorkflowStatus.OPENING,
             payload={
                 "long_exchange": opportunity.long_exchange,
                 "short_exchange": opportunity.short_exchange,
@@ -158,10 +160,10 @@ class CrossExchangeFundingService:
             workflow_type=self.strategy_name,
             exchange=opportunity.short_exchange,
             symbol=opportunity.symbol,
-            status="open" if result.status == "opened" else result.status,
+            status=WorkflowStatus.OPEN if result.status == OpenPositionStatus.OPENED else result.status,
             payload={"opened_at": now.isoformat(), "reason": result.reason},
         )
-        if result.execution is not None and result.status == "opened":
+        if result.execution is not None and result.status == OpenPositionStatus.OPENED:
             self._persist_execution(result.execution)
             self._persist_positions(
                 opportunity=opportunity,
@@ -184,7 +186,7 @@ class CrossExchangeFundingService:
             workflow_type=self.strategy_name,
             exchange=position.short_exchange,
             symbol=position.symbol,
-            status="closing",
+            status=WorkflowStatus.CLOSING,
             payload={"reason": reason},
         )
         result = await self.close_workflow.execute_cross_exchange(
@@ -206,10 +208,10 @@ class CrossExchangeFundingService:
             workflow_type=self.strategy_name,
             exchange=position.short_exchange,
             symbol=position.symbol,
-            status="closed" if result.status == "closed" else result.status,
+            status=WorkflowStatus.CLOSED if result.status == ClosePositionStatus.CLOSED else result.status,
             payload={"reason": result.reason},
         )
-        if result.execution is not None and result.status == "closed":
+        if result.execution is not None and result.status == ClosePositionStatus.CLOSED:
             self._persist_execution(result.execution)
             self._persist_positions(
                 opportunity=CrossExchangeOpportunity(

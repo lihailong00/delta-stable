@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from collections.abc import Mapping
 
-from arb.execution.executor import ExecutionLeg, ExecutionResult, PairExecutor
+from arb.execution.executor import ExecutionLeg, ExecutionResult, ExecutionStatus, PairExecutor
 from arb.execution.router import ExecutionRouter, RouteDecision
 from arb.models import MarketType, Side
 from arb.risk.checks import RiskAlert, RiskChecker, RiskReason
@@ -20,6 +20,7 @@ from arb.workflows.components import (
     WorkflowRoutePlanner,
 )
 from arb.workflows.open_position import VenueClients
+from arb.workflows.enums import ClosePositionStatus
 
 
 @dataclass(slots=True, frozen=True)
@@ -115,7 +116,7 @@ class ClosePositionResult:
     """平仓工作流执行结果。"""
 
     # 工作流最终状态，例如 closed / reduced / failed。
-    status: str
+    status: ClosePositionStatus
     # 结果原因，用于日志与上层编排。
     reason: str
     # 本次执行采用的路由决策。
@@ -189,7 +190,7 @@ class ClosePositionWorkflow:
         retries = 0
         if self._is_success(execution) and self._is_fully_closed(remaining_spot, remaining_perp):
             return ClosePositionResult(
-                status="closed",
+                status=ClosePositionStatus.CLOSED,
                 reason=reason,
                 route=route,
                 execution=execution,
@@ -215,7 +216,7 @@ class ClosePositionWorkflow:
             remaining_perp = self._remaining_quantity(execution, 1, remaining_perp)
             if self._is_success(execution) and self._is_fully_closed(remaining_spot, remaining_perp):
                 return ClosePositionResult(
-                    status="closed",
+                    status=ClosePositionStatus.CLOSED,
                     reason=reason,
                     route=route,
                     execution=execution,
@@ -230,7 +231,7 @@ class ClosePositionWorkflow:
             remaining_perp=remaining_perp,
         ):
             return ClosePositionResult(
-                status="reduced",
+                status=ClosePositionStatus.REDUCED,
                 reason=reason,
                 route=route,
                 execution=execution,
@@ -241,7 +242,7 @@ class ClosePositionWorkflow:
             )
 
         return ClosePositionResult(
-            status="failed",
+            status=ClosePositionStatus.FAILED,
             reason=reason,
             route=route,
             execution=execution,
@@ -275,7 +276,7 @@ class ClosePositionWorkflow:
         if long_venue is None or short_venue is None:
             missing = request.long_exchange if long_venue is None else request.short_exchange
             return ClosePositionResult(
-                status="failed",
+                status=ClosePositionStatus.FAILED,
                 reason=f"missing venue: {missing}",
                 route=route,
             )
@@ -313,15 +314,15 @@ class ClosePositionWorkflow:
             context=short_venue.perp_context,
         )
         execution = await self.executor.execute_pair(long_leg, short_leg)
-        if execution.status in {"filled", "adjusted"}:
+        if execution.status in {ExecutionStatus.FILLED, ExecutionStatus.ADJUSTED}:
             return ClosePositionResult(
-                status="closed",
+                status=ClosePositionStatus.CLOSED,
                 reason=request.close_reason or "spread_compressed",
                 route=route,
                 execution=execution,
             )
         return ClosePositionResult(
-            status="failed",
+            status=ClosePositionStatus.FAILED,
             reason=request.close_reason or execution.reason or "close_failed",
             route=route,
             execution=execution,
@@ -344,10 +345,10 @@ class ClosePositionWorkflow:
 
         venue = self.venue_resolver.resolve(request.venue_clients, route.exchange)
         if venue is None:
-            return ExecutionResult(status="failed", reason=f"missing venue: {route.exchange}")
+            return ExecutionResult(status=ExecutionStatus.FAILED, reason=f"missing venue: {route.exchange}")
         # 两条腿都已经没有剩余数量时，直接视作成功完成。
         if spot_quantity <= 0 and perp_quantity <= 0:
-            return ExecutionResult(status="filled")
+            return ExecutionResult(status=ExecutionStatus.FILLED)
         # 现货腿平仓即卖出现货。
         spot_leg = ExecutionLeg(
             client=venue.spot_client,
@@ -396,20 +397,20 @@ class ClosePositionWorkflow:
                 symbol=leg.symbol,
                 market_type=leg.market_type,
             )
-            status = "filled"
+            status = ExecutionStatus.FILLED
             # 如果超时且完全没有成交，则按失败处理；部分成交则标记为 partial，交给上层继续减仓。
             if tracked.timed_out and tracked.final_order.filled_quantity == 0:
-                status = "failed"
+                status = ExecutionStatus.FAILED
             elif tracked.final_order.remaining_quantity > 0:
-                status = "partial"
+                status = ExecutionStatus.PARTIAL
             return ExecutionResult(
                 status=status,
                 orders=[tracked.final_order],
-                reason="" if status == "filled" else "close_failed",
+                reason="" if status == ExecutionStatus.FILLED else "close_failed",
             )
         # 两条腿都还存在时，交给配对执行器做联动执行。
         execution = await self.executor.execute_pair(spot_leg, perp_leg)
-        if execution.status == "failed" and not execution.reason:
+        if execution.status == ExecutionStatus.FAILED and not execution.reason:
             # 给失败结果补上统一的默认原因，方便上层处理。
             execution.reason = "close_failed"
         return execution
@@ -467,7 +468,7 @@ class ClosePositionWorkflow:
         `index` 对应订单列表里的腿顺序；若该腿没有返回订单，则保守地沿用默认数量。
         """
 
-        if execution.status == "adjusted":
+        if execution.status == ExecutionStatus.ADJUSTED:
             # 已经提交过补单时，当前工作流把该腿视为已交给调整单收口，不再继续重复下相同数量。
             return Decimal("0")
         if len(execution.orders) <= index:
@@ -494,4 +495,4 @@ class ClosePositionWorkflow:
     def _is_success(self, execution: ExecutionResult) -> bool:
         """判断本次执行是否可视为成功结束。"""
 
-        return execution.status in {"filled", "adjusted"}
+        return execution.status in {ExecutionStatus.FILLED, ExecutionStatus.ADJUSTED}

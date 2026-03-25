@@ -8,10 +8,10 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from arb.funding import DEFAULT_FUNDING_INTERVAL_HOURS
-from arb.execution.executor import ExecutionLeg, ExecutionResult, PairExecutor
+from arb.execution.executor import ExecutionLeg, ExecutionResult, ExecutionStatus, PairExecutor
 from arb.execution.guards import GuardContext
 from arb.execution.protocols import ClockFn, CreateOrderClient
-from arb.execution.router import ExecutionRouter, RouteDecision
+from arb.execution.router import ExecutionRouter, RouteDecision, RouteMode
 from arb.models import MarketType, Order, Side
 from arb.strategy.spot_perp import SpotPerpInputs, SpotPerpStrategy
 from arb.workflows.components import (
@@ -21,6 +21,7 @@ from arb.workflows.components import (
     VenueResolver,
     WorkflowRoutePlanner,
 )
+from arb.workflows.enums import OpenPositionStatus
 
 
 @dataclass(slots=True, frozen=True)
@@ -120,7 +121,7 @@ class OpenPositionResult:
     """开仓工作流输出结果。"""
 
     # 工作流最终状态，例如 opened / rejected / rolled_back / failed。
-    status: str
+    status: OpenPositionStatus
     # 结果原因，供上层日志与状态机使用。
     reason: str
     # 本次执行采用的路由决策。
@@ -178,7 +179,7 @@ class OpenPositionWorkflow:
             )
         )
         if not quote_check.accepted:
-            return OpenPositionResult(status="rejected", reason=quote_check.reason)
+            return OpenPositionResult(status=OpenPositionStatus.REJECTED, reason=quote_check.reason)
 
         # 记录开始时间，用于后续判断是否已经超过可容忍的裸腿时间。
         started_at = float(self.clock())
@@ -189,7 +190,7 @@ class OpenPositionWorkflow:
 
         if self._is_success(execution):
             return OpenPositionResult(
-                status="opened",
+                status=OpenPositionStatus.OPENED,
                 reason="opened",
                 route=route,
                 execution=execution,
@@ -207,7 +208,7 @@ class OpenPositionWorkflow:
             attempts += 1
             if self._is_success(retry_execution):
                 return OpenPositionResult(
-                    status="opened",
+                    status=OpenPositionStatus.OPENED,
                     reason="opened_after_taker_fallback",
                     route=retry_route,
                     execution=retry_execution,
@@ -224,7 +225,7 @@ class OpenPositionWorkflow:
             execution,
             elapsed_seconds=elapsed,
         )
-        status = "rolled_back" if rollback_orders else "failed"
+        status = OpenPositionStatus.ROLLED_BACK if rollback_orders else OpenPositionStatus.FAILED
         reason = rollback_reason or execution.reason or "open_failed"
         return OpenPositionResult(
             status=status,
@@ -258,7 +259,7 @@ class OpenPositionWorkflow:
         short_venue = self.venue_resolver.resolve(request.venue_clients, request.short_exchange)
         if long_venue is None or short_venue is None:
             missing = request.long_exchange if long_venue is None else request.short_exchange
-            return OpenPositionResult(status="failed", reason=f"missing venue: {missing}", route=route)
+            return OpenPositionResult(status=OpenPositionStatus.FAILED, reason=f"missing venue: {missing}", route=route)
 
         # 做多腿：在 long_exchange 上买入永续。
         long_leg = ExecutionLeg(
@@ -292,16 +293,16 @@ class OpenPositionWorkflow:
         )
         execution = await self.executor.execute_pair(long_leg, short_leg)
         # filled / adjusted 都视为开仓成功；adjusted 表示执行器内部已经做过补偿调整。
-        if execution.status in {"filled", "adjusted"}:
+        if execution.status in {ExecutionStatus.FILLED, ExecutionStatus.ADJUSTED}:
             return OpenPositionResult(
-                status="opened",
+                status=OpenPositionStatus.OPENED,
                 reason="opened",
                 route=route,
                 execution=execution,
                 attempts=1,
             )
         return OpenPositionResult(
-            status="failed",
+            status=OpenPositionStatus.FAILED,
             reason=execution.reason or "open_failed",
             route=route,
             execution=execution,
@@ -318,7 +319,7 @@ class OpenPositionWorkflow:
         # 根据路由结果解析交易所客户端；路由命中了不存在的交易所时直接失败。
         venue = self.venue_resolver.resolve(request.venue_clients, route.exchange)
         if venue is None:
-            return ExecutionResult(status="failed", reason=f"missing venue: {route.exchange}")
+            return ExecutionResult(status=ExecutionStatus.FAILED, reason=f"missing venue: {route.exchange}")
         # 现货腿负责买入底仓。
         spot_leg = ExecutionLeg(
             client=venue.spot_client,
@@ -350,7 +351,7 @@ class OpenPositionWorkflow:
             context=venue.perp_context,
         )
         execution = await self.executor.execute_pair(spot_leg, perp_leg)
-        if execution.status == "failed" and not execution.reason:
+        if execution.status == ExecutionStatus.FAILED and not execution.reason:
             # 统一补上默认失败原因，避免上层拿到空字符串。
             execution.reason = "open_failed"
         return execution
@@ -380,10 +381,10 @@ class OpenPositionWorkflow:
         """判断是否值得从当前失败结果切到 taker 再试一次。"""
 
         # 已经是 taker 就没有继续升级的空间了。
-        if route.mode == "taker":
+        if route.mode == RouteMode.TAKER:
             return False
         # 只有明确失败时才考虑 fallback；部分成功会进入回滚分支。
-        if execution.status != "failed":
+        if execution.status != ExecutionStatus.FAILED:
             return False
         # 一旦已经形成敞口，优先回滚而不是继续加码重试。
         if self._has_exposure(execution):
@@ -457,4 +458,4 @@ class OpenPositionWorkflow:
     def _is_success(self, execution: ExecutionResult) -> bool:
         """判断执行结果是否可以视为成功开仓。"""
 
-        return execution.status in {"filled", "adjusted"}
+        return execution.status in {ExecutionStatus.FILLED, ExecutionStatus.ADJUSTED}

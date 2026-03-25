@@ -8,6 +8,7 @@ from typing import Callable
 from pydantic import ConfigDict
 
 from arb.control.deps import ApiContext
+from arb.control.enums import HealthStatus
 from arb.control.schemas import (
     CommandRequest,
     CommandResponse,
@@ -72,7 +73,7 @@ class ControlAPI:
         return cls(bridge.build_api_context(dispatcher, auth_token=auth_token))  # type: ignore[attr-defined]
 
     def health(self) -> HealthResponse:
-        return HealthResponse(status="ok")
+        return HealthResponse(status=HealthStatus.OK)
 
     def positions(self, token: str | None) -> list[PositionResponse]:
         self.context.require_token(token)

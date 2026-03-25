@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from arb.execution.executor import PairExecutor
 from arb.execution.guards import GuardContext
 from arb.execution.order_tracker import OrderTracker
-from arb.execution.router import RouteDecision
+from arb.execution.router import RouteDecision, RouteMode
 from arb.models import MarketType, Order, OrderStatus, Side
 from arb.strategy.spot_perp import SpotPerpStrategy
 from arb.workflows.components import RoutePlanningRequest
@@ -68,7 +68,7 @@ class _Clock:
 @dataclass
 class _RoutePlanner:
     exchange: str
-    mode: str
+    mode: RouteMode
     calls: list[RoutePlanningRequest] = field(default_factory=list)
 
     def plan(self, request: RoutePlanningRequest) -> RouteDecision:
@@ -307,7 +307,7 @@ class TestOpenPositionWorkflow:
             fetched_orders=[_order(exchange="binance", market_type=MarketType.PERPETUAL, side=Side.SELL, quantity="1", price="100.1", order_id="perp-1", status=OrderStatus.FILLED, filled_quantity="1")],
         )
         venue = VenueClients(exchange="binance", spot_client=spot_client, perp_client=perp_client)
-        route_planner = _RoutePlanner(exchange="synthetic-binance", mode="taker")
+        route_planner = _RoutePlanner(exchange="synthetic-binance", mode=RouteMode.TAKER)
         venue_resolver = _VenueResolver(alias="synthetic-binance", target="binance")
         workflow = OpenPositionWorkflow(
             executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep)),

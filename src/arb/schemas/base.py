@@ -31,6 +31,18 @@ type SerializableValue = (
 )
 
 
+def _normalize_serializable(value: object) -> SerializableValue:
+    if isinstance(value, Enum):
+        return cast(SerializableValue, value.value)
+    if isinstance(value, dict):
+        return {str(key): _normalize_serializable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_serializable(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_normalize_serializable(item) for item in value)
+    return cast(SerializableValue, value)
+
+
 class ArbModel(BaseModel):
     """Base mutable model for explicit project schemas."""
 
@@ -41,7 +53,8 @@ class ArbModel(BaseModel):
     )
 
     def to_dict(self) -> dict[str, SerializableValue]:
-        return self.model_dump(mode="python", by_alias=True)
+        dumped = self.model_dump(mode="python", by_alias=True)
+        return cast(dict[str, SerializableValue], _normalize_serializable(dumped))
 
     def __getitem__(self, item: str) -> SerializableValue:
         value = getattr(self, item, None)
