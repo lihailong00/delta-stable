@@ -79,3 +79,77 @@ class TestFundingScanner:
         assert results[0].capacity_quantity == Decimal('1.0')
         assert results[0].capacity_notional_usd == Decimal('99.97')
         assert results[0].liquidity_usd == Decimal('99.97')
+
+    def test_scanner_uses_spot_perp_view_depth_for_prices_and_capacity(self) -> None:
+        scanner = FundingScanner(
+            min_net_rate=Decimal('0'),
+            min_liquidity_usd=Decimal('0'),
+            max_orderbook_levels=2,
+            max_orderbook_slippage_bps=Decimal('20'),
+        )
+        snapshots = [
+            {
+                'ticker': {'bid': '100.3', 'ask': '100.4', 'market_type': 'perpetual'},
+                'funding': {'exchange': 'binance', 'symbol': 'BTC/USDT', 'rate': '0.0010', 'funding_interval_hours': 8},
+                'view': {
+                    'spot_ticker': {'exchange': 'binance', 'symbol': 'BTC/USDT', 'market_type': 'spot', 'bid': '99.9', 'ask': '100.0'},
+                    'perp_ticker': {'exchange': 'binance', 'symbol': 'BTC/USDT', 'market_type': 'perpetual', 'bid': '100.3', 'ask': '100.4'},
+                    'spot_orderbook': {
+                        'exchange': 'binance',
+                        'symbol': 'BTC/USDT',
+                        'market_type': 'spot',
+                        'bids': [{'price': '99.9', 'size': '1'}],
+                        'asks': [{'price': '100.0', 'size': '0.5'}, {'price': '100.1', 'size': '0.5'}],
+                    },
+                    'perp_orderbook': {
+                        'exchange': 'binance',
+                        'symbol': 'BTC/USDT',
+                        'market_type': 'perpetual',
+                        'bids': [{'price': '100.3', 'size': '0.4'}, {'price': '100.2', 'size': '0.6'}],
+                        'asks': [{'price': '100.4', 'size': '1'}],
+                    },
+                },
+            }
+        ]
+
+        results = scanner.scan(snapshots)
+
+        assert len(results) == 1
+        assert results[0].capacity_quantity == Decimal('1.0')
+        assert results[0].spot_entry_price == Decimal('100.05')
+        assert results[0].perp_entry_price == Decimal('100.24')
+        assert results[0].entry_basis_bps > Decimal('0')
+
+    def test_scanner_filters_pair_quotes_outside_default_basis_threshold(self) -> None:
+        scanner = FundingScanner(
+            min_net_rate=Decimal('0'),
+            min_liquidity_usd=Decimal('0'),
+            max_orderbook_levels=2,
+            max_orderbook_slippage_bps=Decimal('20'),
+        )
+        snapshots = [
+            {
+                'ticker': {'bid': '100.4', 'ask': '100.5', 'market_type': 'perpetual'},
+                'funding': {'exchange': 'binance', 'symbol': 'BTC/USDT', 'rate': '0.0010', 'funding_interval_hours': 8},
+                'view': {
+                    'spot_ticker': {'exchange': 'binance', 'symbol': 'BTC/USDT', 'market_type': 'spot', 'bid': '99.9', 'ask': '100.0'},
+                    'perp_ticker': {'exchange': 'binance', 'symbol': 'BTC/USDT', 'market_type': 'perpetual', 'bid': '100.4', 'ask': '100.5'},
+                    'spot_orderbook': {
+                        'exchange': 'binance',
+                        'symbol': 'BTC/USDT',
+                        'market_type': 'spot',
+                        'bids': [{'price': '99.9', 'size': '1'}],
+                        'asks': [{'price': '100.0', 'size': '0.5'}, {'price': '100.1', 'size': '0.5'}],
+                    },
+                    'perp_orderbook': {
+                        'exchange': 'binance',
+                        'symbol': 'BTC/USDT',
+                        'market_type': 'perpetual',
+                        'bids': [{'price': '100.4', 'size': '0.4'}, {'price': '100.3', 'size': '0.6'}],
+                        'asks': [{'price': '100.5', 'size': '1'}],
+                    },
+                },
+            }
+        ]
+
+        assert scanner.scan(snapshots) == []

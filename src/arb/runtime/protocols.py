@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from arb.market.schemas import MarketSnapshot
+from arb.market.spot_perp_view import SpotPerpSnapshot
 from arb.models import MarketType
 from arb.schemas.base import SerializableValue
 
@@ -47,6 +48,22 @@ class SnapshotRuntimeProtocol(PublicPingRuntimeProtocol, Protocol):
         market_type: MarketType,
     ) -> MarketSnapshot:
         """抓取指定标的、指定市场的归一化快照。"""
+
+
+@runtime_checkable
+class SpotPerpSnapshotRuntimeProtocol(PublicPingRuntimeProtocol, Protocol):
+    """现货/永续成对快照协议。
+
+    这个协议用于 funding arbitrage 这类必须同时看到现货腿和永续腿的场景。
+    """
+
+    async def fetch_spot_perp_snapshot(
+        self,
+        symbol: str,
+        *,
+        max_age_seconds: float = 3.0,
+    ) -> SpotPerpSnapshot:
+        """抓取同一交易所、同一标的的现货/永续成对快照。"""
 
 
 @runtime_checkable

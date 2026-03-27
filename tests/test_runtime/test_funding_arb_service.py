@@ -497,7 +497,7 @@ class TestFundingArbService:
         assert len(result["opened"]) == 1
         assert result["opened"][0].status == "opened"
 
-    async def test_service_caps_open_quantity_by_opportunity_capacity(self) -> None:
+    async def test_service_uses_capacity_and_pair_prices_when_opening(self) -> None:
         spot_client = _Client(
             orders=[
                 _order(
@@ -553,7 +553,7 @@ class TestFundingArbService:
         scanner = _SequenceScanner(
             [
                 {
-                    "snapshots": [build_market_snapshot("binance", "BTC/USDT", rate="0.001")],
+                    "snapshots": [build_market_snapshot("binance", "BTC/USDT", rate="0.001", ask="101", bid="99")],
                     "opportunities": [
                         FundingOpportunity(
                             exchange="binance",
@@ -568,6 +568,9 @@ class TestFundingArbService:
                             liquidity_usd=Decimal("40"),
                             capacity_quantity=Decimal("0.4"),
                             capacity_notional_usd=Decimal("40"),
+                            spot_entry_price=Decimal("100.2"),
+                            perp_entry_price=Decimal("100.4"),
+                            entry_basis_bps=Decimal("19.96007984031936127744510978"),
                         )
                     ],
                     "output": [],
@@ -589,5 +592,7 @@ class TestFundingArbService:
         assert len(result["opened"]) == 1
         assert spot_client.submitted[0]["quantity"] == Decimal("0.4")
         assert perp_client.submitted[0]["quantity"] == Decimal("0.4")
+        assert spot_client.submitted[0]["price"] == Decimal("100.2")
+        assert perp_client.submitted[0]["price"] == Decimal("100.4")
         assert result["active"][0].spot_quantity == Decimal("0.4")
         assert result["active"][0].perp_quantity == Decimal("0.4")

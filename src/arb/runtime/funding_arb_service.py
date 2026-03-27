@@ -10,7 +10,7 @@ from decimal import Decimal
 from arb.execution.executor import ExecutionResult
 from arb.execution.router import RouteDecision
 
-from arb.market.schemas import MarketSnapshot, coerce_market_snapshot
+from arb.market.schemas import MarketSnapshot, coerce_market_snapshot, coerce_ticker
 from arb.models import MarketType, Position, PositionDirection
 from arb.risk.checks import RiskAlert
 from arb.risk.position_monitor import PositionMonitor, PositionMonitorDecision
@@ -158,6 +158,7 @@ class FundingArbService:
                 continue
             self._record_monitor_state(position, monitor_decision)
             # 没有触发风控时，再交给策略判断当前持仓是否需要退出。
+            spot_price, perp_price = self._strategy_prices(snapshot)
             decision = self.strategy.evaluate(
                 SpotPerpInputs(
                     symbol=position.symbol,
@@ -167,8 +168,8 @@ class FundingArbService:
                         if snapshot.funding is not None
                         else self.strategy.threshold_interval_hours
                     ),
-                    spot_price=snapshot.ticker.ask,
-                    perp_price=snapshot.ticker.bid,
+                    spot_price=spot_price,
+                    perp_price=perp_price,
                     spot_quantity=position.spot_quantity,
                     perp_quantity=position.perp_quantity,
                 ),
@@ -268,6 +269,7 @@ class FundingArbService:
         """
 
         workflow_id = self._key(opportunity.exchange, opportunity.symbol)
+        spot_price, perp_price = self._open_prices(opportunity, snapshot)
         # 开仓前先把 workflow 状态写入 pipeline，便于外部观测执行进度。
         self.pipeline.record_workflow_state(
             workflow_id=workflow_id,
@@ -283,8 +285,8 @@ class FundingArbService:
                 quantity=quantity,
                 funding_rate=opportunity.gross_rate,
                 funding_interval_hours=opportunity.funding_interval_hours,
-                spot_price=snapshot.ticker.ask,
-                perp_price=snapshot.ticker.bid,
+                spot_price=spot_price,
+                perp_price=perp_price,
                 venue_client_bundle={opportunity.exchange: self.venues[opportunity.exchange]},
                 preferred_exchange=opportunity.exchange,
                 maker_fee_rate=Decimal("0"),
@@ -315,8 +317,8 @@ class FundingArbService:
                 symbol=opportunity.symbol,
                 spot_quantity=spot_quantity,
                 perp_quantity=perp_quantity,
-                spot_entry=snapshot.ticker.ask,
-                perp_entry=snapshot.ticker.bid,
+                spot_entry=spot_price,
+                perp_entry=perp_price,
             )
         return result
 
@@ -346,13 +348,14 @@ class FundingArbService:
             status=WorkflowStatus.CLOSING,
             payload=closing_payload,
         )
+        spot_price, perp_price = self._close_prices(snapshot)
         result = await self.close_workflow.execute(
             ClosePositionRequest(
                 symbol=position.symbol,
                 spot_quantity=position.spot_quantity,
                 perp_quantity=position.perp_quantity,
-                spot_price=snapshot.ticker.bid,
-                perp_price=snapshot.ticker.ask,
+                spot_price=spot_price,
+                perp_price=perp_price,
                 venue_clients={position.exchange: self.venues[position.exchange]},
                 preferred_exchange=position.exchange,
                 funding_rate=(
@@ -398,8 +401,8 @@ class FundingArbService:
                 symbol=position.symbol,
                 spot_quantity=Decimal("0"),
                 perp_quantity=Decimal("0"),
-                spot_entry=snapshot.ticker.bid,
-                perp_entry=snapshot.ticker.ask,
+                spot_entry=spot_price,
+                perp_entry=perp_price,
             )
         elif result.execution is not None and result.status == ClosePositionStatus.REDUCED:
             # 部分减仓时保留剩余数量，后续 run_once 会继续监控残余风险。
@@ -409,8 +412,8 @@ class FundingArbService:
                 symbol=position.symbol,
                 spot_quantity=result.remaining_spot_quantity,
                 perp_quantity=result.remaining_perp_quantity,
-                spot_entry=snapshot.ticker.bid,
-                perp_entry=snapshot.ticker.ask,
+                spot_entry=spot_price,
+                perp_entry=perp_price,
             )
         return result
 
@@ -446,6 +449,61 @@ class FundingArbService:
         if opportunity.capacity_quantity > 0:
             return min(self.position_quantity, opportunity.capacity_quantity)
         return self.position_quantity
+
+    @staticmethod
+    def _open_prices(opportunity: FundingOpportunity, snapshot: MarketSnapshot) -> tuple[Decimal, Decimal]:
+        """返回开仓使用的现货/永续价格，优先采用 scanner 产出的双腿价格。"""
+
+        if opportunity.spot_entry_price > 0 and opportunity.perp_entry_price > 0:
+            return opportunity.spot_entry_price, opportunity.perp_entry_price
+        return FundingArbService._strategy_prices(snapshot)
+
+    @staticmethod
+    def _strategy_prices(snapshot: MarketSnapshot) -> tuple[Decimal, Decimal]:
+        """返回策略层评估应使用的现货 ask / 永续 bid 组合报价。"""
+
+        return FundingArbService._view_prices(
+            snapshot,
+            spot_field="ask",
+            perp_field="bid",
+            fallback_spot=snapshot.ticker.ask,
+            fallback_perp=snapshot.ticker.bid,
+        )
+
+    @staticmethod
+    def _close_prices(snapshot: MarketSnapshot) -> tuple[Decimal, Decimal]:
+        """返回平仓使用的现货/永续反向价格。"""
+
+        return FundingArbService._view_prices(
+            snapshot,
+            spot_field="bid",
+            perp_field="ask",
+            fallback_spot=snapshot.ticker.bid,
+            fallback_perp=snapshot.ticker.ask,
+        )
+
+    @staticmethod
+    def _view_prices(
+        snapshot: MarketSnapshot,
+        *,
+        spot_field: str,
+        perp_field: str,
+        fallback_spot: Decimal,
+        fallback_perp: Decimal,
+    ) -> tuple[Decimal, Decimal]:
+        view_payload = snapshot.view
+        if not isinstance(view_payload, Mapping):
+            return fallback_spot, fallback_perp
+        spot_payload = view_payload.get("spot_ticker")
+        perp_payload = view_payload.get("perp_ticker")
+        if not isinstance(spot_payload, Mapping) or not isinstance(perp_payload, Mapping):
+            return fallback_spot, fallback_perp
+        spot_ticker = coerce_ticker(dict(spot_payload))
+        perp_ticker = coerce_ticker(dict(perp_payload))
+        return (
+            Decimal(str(getattr(spot_ticker, spot_field, fallback_spot))),
+            Decimal(str(getattr(perp_ticker, perp_field, fallback_perp))),
+        )
 
     def _monitor_alert_payload(self, alerts: Sequence[RiskAlert]) -> dict[str, SerializableValue]:
         """把监控告警统一序列化成可持久化的 payload 结构。"""

@@ -36,7 +36,7 @@ class RealtimeScanner:
         *,
         dry_run: bool = False,
     ) -> RealtimeScanResult:
-        snapshots: list[MarketSnapshot] = await self.manager.collect_snapshots(targets)
+        snapshots: list[MarketSnapshot] = await self.manager.collect_funding_snapshots(targets)
         opportunities = self.scanner.scan(snapshots)
         output = self.pipeline.process(snapshots, opportunities, dry_run=dry_run)
         return RealtimeScanResult(

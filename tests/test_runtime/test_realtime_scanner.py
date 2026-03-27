@@ -17,7 +17,7 @@ from arb.runtime.pipeline import OpportunityPipeline
 from arb.runtime.protocols import SnapshotRuntimeProtocol
 from arb.runtime.realtime_scanner import RealtimeScanner
 from arb.scanner.funding_scanner import FundingOpportunity, FundingScanner
-from tests.factories import build_market_snapshot
+from tests.factories import build_market_snapshot, build_spot_perp_snapshot
 
 
 class _BarrierRuntime:
@@ -56,6 +56,29 @@ class _StaticRuntime:
 
     async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> MarketSnapshot:
         return build_market_snapshot('binance', symbol, ask="101.0", last="100.5", top_ask_size="12")
+
+
+class _SpotPerpRuntime:
+
+    async def public_ping(self) -> bool:
+        return True
+
+    async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> MarketSnapshot:
+        return build_market_snapshot('binance', symbol, ask="101.0", last="100.5", top_ask_size="12")
+
+    async def fetch_spot_perp_snapshot(self, symbol: str):
+        return build_spot_perp_snapshot(
+            'binance',
+            symbol,
+            spot_bid='99.9',
+            spot_ask='100.0',
+            perp_bid='100.3',
+            perp_ask='100.4',
+            spot_bid_levels=(('99.9', '1'),),
+            spot_ask_levels=(('100.0', '0.5'), ('100.1', '0.5')),
+            perp_bid_levels=(('100.3', '0.4'), ('100.2', '0.6')),
+            perp_ask_levels=(('100.4', '1'),),
+        )
 
 class _MemoryRepository:
 
@@ -113,6 +136,18 @@ class TestRealtimeScanner:
         assert len(messages) == 1
         assert repository.tickers[0].exchange == 'binance'
         assert repository.funding[0].symbol == 'BTC/USDT'
+
+    async def test_scanner_prefers_spot_perp_snapshots_when_runtime_supports_them(self) -> None:
+        pipeline = OpportunityPipeline(metrics=MetricsRegistry())
+        scanner = FundingScanner(min_net_rate=Decimal('0'), min_liquidity_usd=Decimal('0'), max_orderbook_levels=2, max_orderbook_slippage_bps=Decimal('20'))
+        manager = LiveExchangeManager({'binance': _SpotPerpRuntime()})
+        realtime = RealtimeScanner(manager, scanner, pipeline, interval=0)
+
+        result = await realtime.scan_once([ScanTarget('binance', 'BTC/USDT', MarketType.PERPETUAL)], dry_run=True)
+
+        assert result['opportunities'][0].capacity_quantity == Decimal('1.0')
+        assert result['opportunities'][0].spot_entry_price == Decimal('100.05')
+        assert result['opportunities'][0].perp_entry_price == Decimal('100.24')
 
     async def test_manager_enforces_single_slot_per_symbol(self) -> None:
         manager = LiveExchangeManager({'binance': _StaticRuntime()})

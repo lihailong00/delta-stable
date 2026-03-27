@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Protocol
 
 from arb.market.schemas import MarketSnapshot, NormalizedWsEvent
+from arb.market.spot_perp_view import SpotPerpSnapshot
 from arb.models import MarketType
 from arb.net.http import HttpTransport
 from arb.net.ws import Connector
@@ -47,6 +48,14 @@ class ExchangeRuntimeBase:
 
     async def fetch_public_snapshot(self, symbol: str, market_type: MarketType) -> MarketSnapshot:
         return await self.snapshot_service.fetch_public_snapshot(symbol, market_type)
+
+    async def fetch_spot_perp_snapshot(
+        self,
+        symbol: str,
+        *,
+        max_age_seconds: float = 3.0,
+    ) -> SpotPerpSnapshot:
+        return await self.snapshot_service.fetch_spot_perp_snapshot(symbol, max_age_seconds=max_age_seconds)
 
 
 class PublicExchangeRuntime(ExchangeRuntimeBase):

@@ -32,7 +32,13 @@ from collections.abc import Mapping, Sequence
 from decimal import Decimal
 
 from arb.funding import DEFAULT_FUNDING_INTERVAL_HOURS
-from arb.market.schemas import MarketSnapshot, coerce_market_snapshot
+from arb.market.schemas import (
+    MarketSnapshot,
+    coerce_market_snapshot,
+    coerce_orderbook,
+    coerce_ticker,
+)
+from arb.models import MarketType, OrderBook, Ticker
 from arb.schemas.base import ArbFrozenModel, SerializableValue
 
 from arb.scanner.cost_model import annualize_rate, daily_rate, estimate_net_rate, hourly_rate
@@ -90,6 +96,10 @@ class FundingOpportunity(ArbFrozenModel):
     liquidity_usd: Decimal  # 估算流动性，优先使用快照显式值，否则退化为 ask * top_ask_size
     capacity_quantity: Decimal = Decimal("0")  # 在当前订单簿深度与滑点限制下，建议的最大开仓数量
     capacity_notional_usd: Decimal = Decimal("0")  # 与 capacity_quantity 对应的保守名义资金容量
+    spot_entry_price: Decimal = Decimal("0")  # 现货腿实际入场参考价；完整模式下优先使用现货 VWAP
+    perp_entry_price: Decimal = Decimal("0")  # 永续腿实际入场参考价；完整模式下优先使用永续 VWAP
+    entry_basis_bps: Decimal = Decimal("0")  # 以实际入场参考价计算的 spot/perp 基差
+    pair_mode: bool = False  # 是否来自真实的现货/永续双腿视图；basis 过滤仅对这种机会生效
 
 
 class FundingScanner:
@@ -113,6 +123,7 @@ class FundingScanner:
         transfer_rate: Decimal = Decimal("0"),
         min_net_rate: Decimal = Decimal("0"),
         min_liquidity_usd: Decimal = Decimal("0"),
+        max_entry_basis_bps: Decimal | None = Decimal("25"),
         max_orderbook_slippage_bps: Decimal = Decimal("0"),
         max_orderbook_levels: int | None = 1,
         whitelist: set[str] | None = None,
@@ -133,6 +144,7 @@ class FundingScanner:
            用于控制哪些候选会被保留下来：
            - `min_net_rate`: 最低净收益率门槛
            - `min_liquidity_usd`: 最低流动性门槛
+           - `max_entry_basis_bps`: 允许的最大双腿入场基差；超出后直接过滤
            - `max_orderbook_slippage_bps`: 订单簿深度估算允许的最大 VWAP 滑点
            - `max_orderbook_levels`: 深度估算最多消费多少档盘口；`None` 表示不限制
            - `whitelist`: 若设置，则只有列表内 symbol 会被保留
@@ -145,6 +157,7 @@ class FundingScanner:
         self.transfer_rate = transfer_rate
         self.min_net_rate = min_net_rate
         self.min_liquidity_usd = min_liquidity_usd
+        self.max_entry_basis_bps = max_entry_basis_bps
         self.max_orderbook_slippage_bps = max_orderbook_slippage_bps
         self.max_orderbook_levels = max_orderbook_levels
         self.whitelist = whitelist
@@ -205,6 +218,9 @@ class FundingScanner:
             # 若快照没有 orderbook，再回退到旧的顶档流动性近似。
             capacity = self._entry_capacity(snapshot)
             liquidity_usd = capacity.notional_usd
+            spot_entry_price, perp_entry_price = self._entry_prices(snapshot, capacity)
+            entry_basis_bps = self._basis_bps(spot_entry_price, perp_entry_price)
+            pair_mode = self._has_pair_view(snapshot)
 
             # 将单个快照转换成统一的机会对象。
             # 注意这些 rate 都是比例值，不是百分数字符串。
@@ -223,6 +239,10 @@ class FundingScanner:
                 liquidity_usd=liquidity_usd,
                 capacity_quantity=capacity.quantity,
                 capacity_notional_usd=capacity.notional_usd,
+                spot_entry_price=spot_entry_price,
+                perp_entry_price=perp_entry_price,
+                entry_basis_bps=entry_basis_bps,
+                pair_mode=pair_mode,
             )
             candidates.append(opportunity)
 
@@ -231,6 +251,7 @@ class FundingScanner:
             candidates,
             min_net_rate=self.min_net_rate,
             min_liquidity_usd=self.min_liquidity_usd,
+            max_entry_basis_bps=self.max_entry_basis_bps,
             whitelist=self.whitelist,
             blacklist=self.blacklist,
         )
@@ -258,12 +279,59 @@ class FundingScanner:
     def _entry_capacity(self, snapshot: MarketSnapshot) -> EntryCapacity:
         """估算当前快照在订单簿约束下的最大可入场容量。
 
-        当前实现仍基于单个 `MarketSnapshot` 工作，因此它做的是“同一快照两侧盘口”
-        的保守估算：
-        - 买入容量来自 asks 深度
-        - 卖出容量来自 bids 深度
-        - 最终取两侧可成交数量的较小值，避免一侧明显更浅时误判可开仓规模
+        完整模式下优先使用成对视图中的：
+        - `spot_orderbook.asks` 计算现货买入容量
+        - `perp_orderbook.bids` 计算永续卖出容量
+
+        若成对视图缺失，则回退到单快照模式，保持旧调用方兼容。
         """
+
+        spot_orderbook = self._spot_orderbook(snapshot)
+        perp_orderbook = self._perp_orderbook(snapshot)
+        if spot_orderbook is None or perp_orderbook is None:
+            return self._single_snapshot_entry_capacity(snapshot)
+
+        buy_capacity = estimate_max_fill_for_slippage(
+            spot_orderbook,
+            side="buy",
+            max_slippage_bps=self.max_orderbook_slippage_bps,
+            max_levels=self.max_orderbook_levels,
+        )
+        sell_capacity = estimate_max_fill_for_slippage(
+            perp_orderbook,
+            side="sell",
+            max_slippage_bps=self.max_orderbook_slippage_bps,
+            max_levels=self.max_orderbook_levels,
+        )
+        quantity = min(buy_capacity.quantity, sell_capacity.quantity)
+        if quantity <= 0:
+            return self._fallback_entry_capacity(snapshot)
+
+        # 两侧各自先估算最大可成交量，再回头按共同数量重算 VWAP。
+        # 这里必须分别用现货 asks 与永续 bids 重算，才能得到真实 pair 的入场价。
+        buy_fill = estimate_fill_for_quantity(
+            spot_orderbook,
+            side="buy",
+            quantity=quantity,
+            max_levels=self.max_orderbook_levels,
+        )
+        sell_fill = estimate_fill_for_quantity(
+            perp_orderbook,
+            side="sell",
+            quantity=quantity,
+            max_levels=self.max_orderbook_levels,
+        )
+        return EntryCapacity(
+            quantity=quantity,
+            notional_usd=min(buy_fill.notional, sell_fill.notional),
+            buy_vwap=buy_fill.vwap,
+            sell_vwap=sell_fill.vwap,
+            buy_slippage_bps=buy_fill.slippage_bps,
+            sell_slippage_bps=sell_fill.slippage_bps,
+        )
+
+    def _single_snapshot_entry_capacity(self, snapshot: MarketSnapshot) -> EntryCapacity:
+        """在缺少成对视图时，回退到单快照模式。"""
 
         orderbook = snapshot.orderbook
         if orderbook is None:
@@ -284,9 +352,6 @@ class FundingScanner:
         quantity = min(buy_capacity.quantity, sell_capacity.quantity)
         if quantity <= 0:
             return self._fallback_entry_capacity(snapshot)
-
-        # 两侧各自先估算最大可成交量，再回头按共同数量重算 VWAP，
-        # 避免一侧更深时把另一侧的真实入场价格高估或低估。
         buy_fill = estimate_fill_for_quantity(
             orderbook,
             side="buy",
@@ -324,4 +389,68 @@ class FundingScanner:
             notional_usd=notional,
             buy_vwap=ask if quantity > 0 else None,
             sell_vwap=snapshot.ticker.bid if quantity > 0 else None,
+        )
+
+    def _entry_prices(self, snapshot: MarketSnapshot, capacity: EntryCapacity) -> tuple[Decimal, Decimal]:
+        """返回现货腿/永续腿的实际入场参考价。"""
+
+        spot_ticker = self._spot_ticker(snapshot)
+        perp_ticker = self._perp_ticker(snapshot)
+        spot_price = capacity.buy_vwap or (spot_ticker.ask if spot_ticker is not None else snapshot.ticker.ask)
+        perp_price = capacity.sell_vwap or (perp_ticker.bid if perp_ticker is not None else snapshot.ticker.bid)
+        return spot_price, perp_price
+
+    @staticmethod
+    def _basis_bps(spot_price: Decimal, perp_price: Decimal) -> Decimal:
+        if spot_price <= 0:
+            return Decimal("0")
+        return ((perp_price - spot_price) / spot_price) * Decimal("10000")
+
+    @staticmethod
+    def _spot_ticker(snapshot: MarketSnapshot) -> Ticker | None:
+        view_payload = snapshot.view
+        if not isinstance(view_payload, Mapping):
+            return None
+        spot_payload = view_payload.get("spot_ticker")
+        return (
+            coerce_ticker(dict(spot_payload), default_market_type=MarketType.SPOT)
+            if isinstance(spot_payload, Mapping)
+            else None
+        )
+
+    @staticmethod
+    def _perp_ticker(snapshot: MarketSnapshot) -> Ticker | None:
+        view_payload = snapshot.view
+        if not isinstance(view_payload, Mapping):
+            return None
+        perp_payload = view_payload.get("perp_ticker")
+        if isinstance(perp_payload, Mapping):
+            return coerce_ticker(dict(perp_payload), default_market_type=MarketType.PERPETUAL)
+        return snapshot.ticker
+
+    @staticmethod
+    def _spot_orderbook(snapshot: MarketSnapshot) -> OrderBook | None:
+        view_payload = snapshot.view
+        if not isinstance(view_payload, Mapping):
+            return None
+        orderbook_payload = view_payload.get("spot_orderbook")
+        return coerce_orderbook(dict(orderbook_payload)) if isinstance(orderbook_payload, Mapping) else None
+
+    @staticmethod
+    def _perp_orderbook(snapshot: MarketSnapshot) -> OrderBook | None:
+        view_payload = snapshot.view
+        if not isinstance(view_payload, Mapping):
+            return snapshot.orderbook
+        orderbook_payload = view_payload.get("perp_orderbook")
+        if isinstance(orderbook_payload, Mapping):
+            return coerce_orderbook(dict(orderbook_payload))
+        return snapshot.orderbook
+
+    @staticmethod
+    def _has_pair_view(snapshot: MarketSnapshot) -> bool:
+        view_payload = snapshot.view
+        return (
+            isinstance(view_payload, Mapping)
+            and isinstance(view_payload.get("spot_ticker"), Mapping)
+            and isinstance(view_payload.get("perp_ticker"), Mapping)
         )

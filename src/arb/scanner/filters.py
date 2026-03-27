@@ -15,6 +15,7 @@ def filter_opportunities(
     *,
     min_net_rate: Decimal = Decimal("0"),
     min_liquidity_usd: Decimal = Decimal("0"),
+    max_entry_basis_bps: Decimal | None = None,
     whitelist: set[str] | None = None,
     blacklist: set[str] | None = None,
 ) -> list["FundingOpportunity"]:
@@ -27,6 +28,12 @@ def filter_opportunities(
         if opportunity.net_rate < min_net_rate:
             continue
         if opportunity.liquidity_usd < min_liquidity_usd:
+            continue
+        if (
+            max_entry_basis_bps is not None
+            and opportunity.pair_mode
+            and abs(opportunity.entry_basis_bps) > max_entry_basis_bps
+        ):
             continue
         results.append(opportunity)
     return results
