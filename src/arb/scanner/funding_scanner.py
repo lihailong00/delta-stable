@@ -36,7 +36,19 @@ from arb.market.schemas import MarketSnapshot, coerce_market_snapshot
 from arb.schemas.base import ArbFrozenModel, SerializableValue
 
 from arb.scanner.cost_model import annualize_rate, daily_rate, estimate_net_rate, hourly_rate
+from arb.scanner.depth import estimate_fill_for_quantity, estimate_max_fill_for_slippage
 from arb.scanner.filters import filter_opportunities
+
+
+class EntryCapacity(ArbFrozenModel):
+    """同一机会在当前订单簿约束下可接受的最大入场容量。"""
+
+    quantity: Decimal = Decimal("0")
+    notional_usd: Decimal = Decimal("0")
+    buy_vwap: Decimal | None = None
+    sell_vwap: Decimal | None = None
+    buy_slippage_bps: Decimal = Decimal("0")
+    sell_slippage_bps: Decimal = Decimal("0")
 
 
 class FundingOpportunity(ArbFrozenModel):
@@ -76,6 +88,8 @@ class FundingOpportunity(ArbFrozenModel):
     annualized_net_rate: Decimal  # 将 net_rate 折算成年化收益率，用于排序展示
     spread_bps: Decimal  # 当前盘口价差，单位 bps；越大通常意味着冲击成本越高
     liquidity_usd: Decimal  # 估算流动性，优先使用快照显式值，否则退化为 ask * top_ask_size
+    capacity_quantity: Decimal = Decimal("0")  # 在当前订单簿深度与滑点限制下，建议的最大开仓数量
+    capacity_notional_usd: Decimal = Decimal("0")  # 与 capacity_quantity 对应的保守名义资金容量
 
 
 class FundingScanner:
@@ -99,6 +113,8 @@ class FundingScanner:
         transfer_rate: Decimal = Decimal("0"),
         min_net_rate: Decimal = Decimal("0"),
         min_liquidity_usd: Decimal = Decimal("0"),
+        max_orderbook_slippage_bps: Decimal = Decimal("0"),
+        max_orderbook_levels: int | None = 1,
         whitelist: set[str] | None = None,
         blacklist: set[str] | None = None,
     ) -> None:
@@ -117,6 +133,8 @@ class FundingScanner:
            用于控制哪些候选会被保留下来：
            - `min_net_rate`: 最低净收益率门槛
            - `min_liquidity_usd`: 最低流动性门槛
+           - `max_orderbook_slippage_bps`: 订单簿深度估算允许的最大 VWAP 滑点
+           - `max_orderbook_levels`: 深度估算最多消费多少档盘口；`None` 表示不限制
            - `whitelist`: 若设置，则只有列表内 symbol 会被保留
            - `blacklist`: 若设置，则列表内 symbol 会被剔除
         """
@@ -127,6 +145,8 @@ class FundingScanner:
         self.transfer_rate = transfer_rate
         self.min_net_rate = min_net_rate
         self.min_liquidity_usd = min_liquidity_usd
+        self.max_orderbook_slippage_bps = max_orderbook_slippage_bps
+        self.max_orderbook_levels = max_orderbook_levels
         self.whitelist = whitelist
         self.blacklist = blacklist
 
@@ -181,12 +201,10 @@ class FundingScanner:
             mid = (bid + ask) / Decimal("2")
             spread_bps = ((ask - bid) / mid) * Decimal("10000") if mid else Decimal("0")
 
-            # 流动性优先使用快照里已经提供的显式估计值；
-            # 如果没有，就退化为“卖一价格 * 卖一数量”的粗略近似。
-            # 这是保守而简单的估算，不代表完整盘口深度。
-            liquidity_usd = snapshot.liquidity_usd
-            if liquidity_usd is None:
-                liquidity_usd = ask * (snapshot.top_ask_size or Decimal("0"))
+            # 先尝试基于订单簿两侧深度估算“这轮机会到底能做多大”。
+            # 若快照没有 orderbook，再回退到旧的顶档流动性近似。
+            capacity = self._entry_capacity(snapshot)
+            liquidity_usd = capacity.notional_usd
 
             # 将单个快照转换成统一的机会对象。
             # 注意这些 rate 都是比例值，不是百分数字符串。
@@ -203,6 +221,8 @@ class FundingScanner:
                 annualized_net_rate=annualize_rate(net_rate, interval_hours=interval_hours),
                 spread_bps=spread_bps,
                 liquidity_usd=liquidity_usd,
+                capacity_quantity=capacity.quantity,
+                capacity_notional_usd=capacity.notional_usd,
             )
             candidates.append(opportunity)
 
@@ -234,3 +254,74 @@ class FundingScanner:
         if isinstance(snapshot, MarketSnapshot):
             return snapshot
         return coerce_market_snapshot(dict(snapshot))
+
+    def _entry_capacity(self, snapshot: MarketSnapshot) -> EntryCapacity:
+        """估算当前快照在订单簿约束下的最大可入场容量。
+
+        当前实现仍基于单个 `MarketSnapshot` 工作，因此它做的是“同一快照两侧盘口”
+        的保守估算：
+        - 买入容量来自 asks 深度
+        - 卖出容量来自 bids 深度
+        - 最终取两侧可成交数量的较小值，避免一侧明显更浅时误判可开仓规模
+        """
+
+        orderbook = snapshot.orderbook
+        if orderbook is None:
+            return self._fallback_entry_capacity(snapshot)
+
+        buy_capacity = estimate_max_fill_for_slippage(
+            orderbook,
+            side="buy",
+            max_slippage_bps=self.max_orderbook_slippage_bps,
+            max_levels=self.max_orderbook_levels,
+        )
+        sell_capacity = estimate_max_fill_for_slippage(
+            orderbook,
+            side="sell",
+            max_slippage_bps=self.max_orderbook_slippage_bps,
+            max_levels=self.max_orderbook_levels,
+        )
+        quantity = min(buy_capacity.quantity, sell_capacity.quantity)
+        if quantity <= 0:
+            return self._fallback_entry_capacity(snapshot)
+
+        # 两侧各自先估算最大可成交量，再回头按共同数量重算 VWAP，
+        # 避免一侧更深时把另一侧的真实入场价格高估或低估。
+        buy_fill = estimate_fill_for_quantity(
+            orderbook,
+            side="buy",
+            quantity=quantity,
+            max_levels=self.max_orderbook_levels,
+        )
+        sell_fill = estimate_fill_for_quantity(
+            orderbook,
+            side="sell",
+            quantity=quantity,
+            max_levels=self.max_orderbook_levels,
+        )
+        return EntryCapacity(
+            quantity=quantity,
+            notional_usd=min(buy_fill.notional, sell_fill.notional),
+            buy_vwap=buy_fill.vwap,
+            sell_vwap=sell_fill.vwap,
+            buy_slippage_bps=buy_fill.slippage_bps,
+            sell_slippage_bps=sell_fill.slippage_bps,
+        )
+
+    @staticmethod
+    def _fallback_entry_capacity(snapshot: MarketSnapshot) -> EntryCapacity:
+        """在缺少订单簿深度时，回退到顶档近似。"""
+
+        ask = snapshot.ticker.ask
+        quantity = snapshot.top_ask_size or Decimal("0")
+        notional = snapshot.liquidity_usd
+        if notional is None:
+            notional = ask * quantity
+        if quantity <= 0 and ask > 0 and notional > 0:
+            quantity = notional / ask
+        return EntryCapacity(
+            quantity=quantity,
+            notional_usd=notional,
+            buy_vwap=ask if quantity > 0 else None,
+            sell_vwap=snapshot.ticker.bid if quantity > 0 else None,
+        )

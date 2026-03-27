@@ -119,6 +119,29 @@ def coerce_funding_rate(
     return FundingRate.model_validate(data)
 
 
+def coerce_orderbook(
+    payload: OrderBook | dict[str, object],
+    *,
+    default_exchange: str | None = None,
+    default_symbol: str | None = None,
+    default_market_type: MarketType = MarketType.PERPETUAL,
+    default_ts: datetime | None = None,
+) -> OrderBook:
+    """把输入统一转换成 `OrderBook` 对象。"""
+
+    if isinstance(payload, OrderBook):
+        return payload
+    data = dict(payload)
+    data.pop("kind", None)
+    data.setdefault("exchange", default_exchange or "")
+    data.setdefault("symbol", default_symbol or "")
+    data.setdefault("market_type", default_market_type.value)
+    data.setdefault("bids", [])
+    data.setdefault("asks", [])
+    data.setdefault("ts", (default_ts or utc_now()).isoformat())
+    return OrderBook.model_validate(data)
+
+
 def coerce_market_snapshot(snapshot: MarketSnapshot | dict[str, object]) -> MarketSnapshot:
     """把输入统一转换成 `MarketSnapshot`。
 
@@ -149,12 +172,25 @@ def coerce_market_snapshot(snapshot: MarketSnapshot | dict[str, object]) -> Mark
         default_market_type=MarketType.PERPETUAL,
         default_ts=funding.ts if isinstance(funding, FundingRate) else None,
     )
+    orderbook_payload = payload.get("orderbook")
+    orderbook = (
+        coerce_orderbook(
+            orderbook_payload,
+            default_exchange=ticker.exchange,
+            default_symbol=ticker.symbol,
+            default_market_type=ticker.market_type,
+            default_ts=ticker.ts,
+        )
+        if isinstance(orderbook_payload, dict)
+        else orderbook_payload
+    )
     liquidity_value = payload.get("liquidity_usd")
     top_ask_size_value = payload.get("top_ask_size")
     view_payload = payload.get("view")
     # 数值字段统一通过 Decimal(str(...)) 转换，避免浮点精度问题。
     return MarketSnapshot(
         ticker=ticker,
+        orderbook=orderbook if isinstance(orderbook, OrderBook) else None,
         funding=funding if isinstance(funding, FundingRate) else None,
         view=dict(view_payload) if isinstance(view_payload, Mapping) else None,
         liquidity_usd=Decimal(str(liquidity_value)) if liquidity_value is not None else None,

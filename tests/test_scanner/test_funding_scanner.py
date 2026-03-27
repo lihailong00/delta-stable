@@ -45,3 +45,37 @@ class TestFundingScanner:
         assert [item.exchange for item in results] == ['okx', 'binance']
         assert results[0].funding_interval_hours == 1
         assert results[0].hourly_net_rate > results[1].hourly_net_rate
+
+    def test_scanner_estimates_capacity_from_orderbook_depth(self) -> None:
+        scanner = FundingScanner(
+            min_net_rate=Decimal('0'),
+            min_liquidity_usd=Decimal('0'),
+            max_orderbook_levels=2,
+            max_orderbook_slippage_bps=Decimal('20'),
+        )
+        snapshots = [
+            {
+                'ticker': {'bid': '100', 'ask': '100.1'},
+                'funding': {'exchange': 'binance', 'symbol': 'BTC/USDT', 'rate': '0.0010', 'funding_interval_hours': 8},
+                'orderbook': {
+                    'exchange': 'binance',
+                    'symbol': 'BTC/USDT',
+                    'market_type': 'perpetual',
+                    'bids': [
+                        {'price': '100.0', 'size': '0.7'},
+                        {'price': '99.9', 'size': '0.3'},
+                    ],
+                    'asks': [
+                        {'price': '100.1', 'size': '0.5'},
+                        {'price': '100.2', 'size': '0.5'},
+                    ],
+                },
+            }
+        ]
+
+        results = scanner.scan(snapshots)
+
+        assert len(results) == 1
+        assert results[0].capacity_quantity == Decimal('1.0')
+        assert results[0].capacity_notional_usd == Decimal('99.97')
+        assert results[0].liquidity_usd == Decimal('99.97')

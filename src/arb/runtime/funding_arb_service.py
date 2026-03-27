@@ -213,18 +213,22 @@ class FundingArbService:
             if snapshot is None or opportunity.exchange not in self.venues:
                 self.manager.release_slot(key)
                 continue
-            open_result = await self._open_position(opportunity, snapshot, current_time)
+            open_quantity = self._open_quantity(opportunity)
+            if open_quantity <= 0:
+                self.manager.release_slot(key)
+                continue
+            open_result = await self._open_position(opportunity, snapshot, current_time, quantity=open_quantity)
             opened.append(open_result)
             if open_result.status == OpenPositionStatus.OPENED:
                 # 默认使用配置的目标下单数量；若执行结果里带有真实成交量，则以真实成交量为准。
-                spot_quantity = self.position_quantity
-                perp_quantity = self.position_quantity
+                spot_quantity = open_quantity
+                perp_quantity = open_quantity
                 if open_result.execution is not None and len(open_result.execution.orders) == 2:
                     spot_quantity = Decimal(
-                        str(open_result.execution.orders[0].filled_quantity or self.position_quantity)
+                        str(open_result.execution.orders[0].filled_quantity or open_quantity)
                     )
                     perp_quantity = Decimal(
-                        str(open_result.execution.orders[1].filled_quantity or self.position_quantity)
+                        str(open_result.execution.orders[1].filled_quantity or open_quantity)
                     )
                 # 开仓成功后，把该头寸写入活跃状态，供后续 run_once 持续监控。
                 self.active_positions[key] = ActiveFundingArb(
@@ -254,6 +258,8 @@ class FundingArbService:
         opportunity: FundingOpportunity,
         snapshot: MarketSnapshot,
         now: datetime,
+        *,
+        quantity: Decimal,
     ) -> OpenPositionResult:
         """执行一次开仓工作流，并把过程/结果落到 pipeline。
 
@@ -274,7 +280,7 @@ class FundingArbService:
         result = await self.open_workflow.execute(
             OpenPositionRequest(
                 symbol=opportunity.symbol,
-                quantity=self.position_quantity,
+                quantity=quantity,
                 funding_rate=opportunity.gross_rate,
                 funding_interval_hours=opportunity.funding_interval_hours,
                 spot_price=snapshot.ticker.ask,
@@ -299,11 +305,16 @@ class FundingArbService:
         if result.execution is not None and result.status == OpenPositionStatus.OPENED:
             # 只有真正有执行结果且开仓成功时，才记录订单/成交和持仓对。
             self._persist_execution(result.execution)
+            spot_quantity = quantity
+            perp_quantity = quantity
+            if len(result.execution.orders) == 2:
+                spot_quantity = Decimal(str(result.execution.orders[0].filled_quantity or quantity))
+                perp_quantity = Decimal(str(result.execution.orders[1].filled_quantity or quantity))
             self._persist_position_pair(
                 exchange=opportunity.exchange,
                 symbol=opportunity.symbol,
-                spot_quantity=self.position_quantity,
-                perp_quantity=self.position_quantity,
+                spot_quantity=spot_quantity,
+                perp_quantity=perp_quantity,
                 spot_entry=snapshot.ticker.ask,
                 perp_entry=snapshot.ticker.bid,
             )
@@ -428,6 +439,13 @@ class FundingArbService:
             },
         )
         self._monitor_state_signatures[position.workflow_id] = signature
+
+    def _open_quantity(self, opportunity: FundingOpportunity) -> Decimal:
+        """根据扫描出的容量与全局配置，决定本轮实际尝试的开仓数量。"""
+
+        if opportunity.capacity_quantity > 0:
+            return min(self.position_quantity, opportunity.capacity_quantity)
+        return self.position_quantity
 
     def _monitor_alert_payload(self, alerts: Sequence[RiskAlert]) -> dict[str, SerializableValue]:
         """把监控告警统一序列化成可持久化的 payload 结构。"""

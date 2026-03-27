@@ -42,6 +42,8 @@ def _opportunity(exchange: str, symbol: str, rate: str, *, interval_hours: int =
         annualized_net_rate=decimal_rate * (Decimal("24") / Decimal(interval_hours)) * Decimal("365"),
         spread_bps=Decimal("2"),
         liquidity_usd=Decimal("1000"),
+        capacity_quantity=Decimal("1"),
+        capacity_notional_usd=Decimal("1000"),
     )
 
 
@@ -53,6 +55,7 @@ def _order(
     side: Side,
     order_id: str,
     status: OrderStatus,
+    quantity: str = "1",
     filled_quantity: str = "1",
     price: str = "100",
     reduce_only: bool = False,
@@ -62,7 +65,7 @@ def _order(
         symbol=symbol,
         market_type=market_type,
         side=side,
-        quantity=Decimal("1"),
+        quantity=Decimal(quantity),
         price=Decimal(price),
         status=status,
         order_id=order_id,
@@ -493,3 +496,98 @@ class TestFundingArbService:
 
         assert len(result["opened"]) == 1
         assert result["opened"][0].status == "opened"
+
+    async def test_service_caps_open_quantity_by_opportunity_capacity(self) -> None:
+        spot_client = _Client(
+            orders=[
+                _order(
+                    exchange="binance",
+                    symbol="BTC/USDT",
+                    market_type=MarketType.SPOT,
+                    side=Side.BUY,
+                    order_id="spot-open",
+                    status=OrderStatus.FILLED,
+                    quantity="0.4",
+                    filled_quantity="0.4",
+                )
+            ],
+            fetched_orders=[
+                _order(
+                    exchange="binance",
+                    symbol="BTC/USDT",
+                    market_type=MarketType.SPOT,
+                    side=Side.BUY,
+                    order_id="spot-open",
+                    status=OrderStatus.FILLED,
+                    quantity="0.4",
+                    filled_quantity="0.4",
+                )
+            ],
+        )
+        perp_client = _Client(
+            orders=[
+                _order(
+                    exchange="binance",
+                    symbol="BTC/USDT",
+                    market_type=MarketType.PERPETUAL,
+                    side=Side.SELL,
+                    order_id="perp-open",
+                    status=OrderStatus.FILLED,
+                    quantity="0.4",
+                    filled_quantity="0.4",
+                )
+            ],
+            fetched_orders=[
+                _order(
+                    exchange="binance",
+                    symbol="BTC/USDT",
+                    market_type=MarketType.PERPETUAL,
+                    side=Side.SELL,
+                    order_id="perp-open",
+                    status=OrderStatus.FILLED,
+                    quantity="0.4",
+                    filled_quantity="0.4",
+                )
+            ],
+        )
+        scanner = _SequenceScanner(
+            [
+                {
+                    "snapshots": [build_market_snapshot("binance", "BTC/USDT", rate="0.001")],
+                    "opportunities": [
+                        FundingOpportunity(
+                            exchange="binance",
+                            symbol="BTC/USDT",
+                            gross_rate=Decimal("0.001"),
+                            net_rate=Decimal("0.001"),
+                            funding_interval_hours=8,
+                            hourly_net_rate=Decimal("0.000125"),
+                            daily_net_rate=Decimal("0.003"),
+                            annualized_net_rate=Decimal("1.095"),
+                            spread_bps=Decimal("2"),
+                            liquidity_usd=Decimal("40"),
+                            capacity_quantity=Decimal("0.4"),
+                            capacity_notional_usd=Decimal("40"),
+                        )
+                    ],
+                    "output": [],
+                }
+            ]
+        )
+        service = FundingArbService(
+            scanner=scanner,
+            open_workflow=OpenPositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
+            close_workflow=ClosePositionWorkflow(executor=PairExecutor(tracker=OrderTracker(max_polls=1, poll_interval=0, sleep=_sleep))),
+            venues={"binance": VenueClientBundle(exchange="binance", spot_client=spot_client, perp_client=perp_client)},
+            manager=LiveExchangeManager({}),
+            pipeline=OpportunityPipeline(repository=_MemoryRepository()),
+            position_quantity=Decimal("1"),
+        )
+
+        result = await service.run_once([ScanTarget("binance", "BTC/USDT", MarketType.PERPETUAL)])
+
+        assert len(result["opened"]) == 1
+        assert spot_client.submitted[0]["quantity"] == Decimal("0.4")
+        assert perp_client.submitted[0]["quantity"] == Decimal("0.4")
+        assert result["active"][0].spot_quantity == Decimal("0.4")
+        assert result["active"][0].perp_quantity == Decimal("0.4")
