@@ -174,7 +174,7 @@ def _request(*, venue: VenueClientBundle, **kwargs: object) -> OpenPositionReque
     return OpenPositionRequest(
         symbol="BTC/USDT",
         quantity=Decimal("1"),
-        venue_clients={venue.exchange: venue},
+        venue_client_bundle={venue.exchange: venue},
         preferred_exchange=venue.exchange,
         **defaults,
     )

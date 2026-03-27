@@ -93,7 +93,7 @@ class VenueResolver(Protocol[VenueT]):
 class DefaultVenueResolver(Generic[VenueT]):
     """默认 venue 解析器。
 
-    默认实现非常直接：把 `exchange` 当成键，直接从 `venue_clients` 映射里取值。
+    默认实现非常直接：把 `exchange` 当成键，直接从 `venue_client_bundle` 映射里取值。
     这已经覆盖了大多数场景；如果以后需要 alias、降级映射或按区域选路，
     可以替换成自定义实现，而不需要改 workflow 主流程。
     """

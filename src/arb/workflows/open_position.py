@@ -59,7 +59,7 @@ class OpenPositionRequest:
     # 永续腿参考价格。
     perp_price: Decimal
     # 可用交易所客户端映射。
-    venue_clients: Mapping[str, VenueClientBundle]
+    venue_client_bundle: Mapping[str, VenueClientBundle]
     # 首选交易所。
     preferred_exchange: str
     # 资金费率对应的周期，用于归一化收益判断。
@@ -317,7 +317,7 @@ class OpenPositionWorkflow:
         """按给定路由尝试一次单交易所开仓。"""
 
         # 根据路由结果解析交易所客户端；路由命中了不存在的交易所时直接失败。
-        venue = self.venue_resolver.resolve(request.venue_clients, route.exchange)
+        venue = self.venue_resolver.resolve(request.venue_client_bundle, route.exchange)
         if venue is None:
             return ExecutionResult(status=ExecutionStatus.FAILED, reason=f"missing venue: {route.exchange}")
         # 现货腿负责买入底仓。
@@ -416,7 +416,7 @@ class OpenPositionWorkflow:
                 return [], "naked_time_exceeded"
             return [], execution.reason or None
 
-        venue = self.venue_resolver.resolve(request.venue_clients, route.exchange)
+        venue = self.venue_resolver.resolve(request.venue_client_bundle, route.exchange)
         if venue is None:
             return [], execution.reason or f"missing venue: {route.exchange}"
 

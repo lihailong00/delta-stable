@@ -279,7 +279,7 @@ class FundingArbService:
                 funding_interval_hours=opportunity.funding_interval_hours,
                 spot_price=snapshot.ticker.ask,
                 perp_price=snapshot.ticker.bid,
-                venue_clients={opportunity.exchange: self.venues[opportunity.exchange]},
+                venue_client_bundle={opportunity.exchange: self.venues[opportunity.exchange]},
                 preferred_exchange=opportunity.exchange,
                 maker_fee_rate=Decimal("0"),
                 taker_fee_rate=Decimal("0"),

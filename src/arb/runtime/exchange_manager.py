@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from arb.market.schemas import MarketSnapshot
 from arb.models import MarketType
 from arb.monitoring.alerts import Alert, AlertManager
-from arb.monitoring.health import HealthChecker
+from arb.monitoring.health import ComponentKey, ComponentKind, HealthChecker
 from arb.runtime.protocols import SnapshotRuntimeProtocol
 
 
@@ -58,14 +58,18 @@ class LiveExchangeManager:
             except Exception as exc:
                 self._emit_failure_alert(target.exchange, target.symbol, exc)
                 return exc
-            self.health_checker.heartbeat(target.exchange)
+            self.health_checker.heartbeat(ComponentKey.exchange(target.exchange))
             return snapshot
 
         results = await asyncio.gather(*(collect_one(target) for target in targets))
         return [snapshot for snapshot in results if not isinstance(snapshot, Exception)]
 
     def unhealthy_exchanges(self) -> list[str]:
-        return self.health_checker.unhealthy_components()
+        return [
+            component.name
+            for component in self.health_checker.unhealthy_components()
+            if component.kind is ComponentKind.EXCHANGE
+        ]
 
     def acquire_slot(self, slot: str) -> bool:
         if slot in self._slots:

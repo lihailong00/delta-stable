@@ -5,7 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
 from arb.monitoring.alerts import Alert, AlertManager
-from arb.monitoring.health import HealthChecker
+from arb.monitoring.health import ComponentKey, HealthChecker
 from arb.monitoring.metrics import MetricsRegistry
 
 class TestAlertManager:
@@ -25,9 +25,9 @@ class TestHealthChecker:
     def test_connection_alerts_when_component_stale(self) -> None:
         checker = HealthChecker(max_staleness=timedelta(seconds=30))
         now = datetime(2026, 3, 16, tzinfo=timezone.utc)
-        checker.heartbeat('ws.binance', at=now)
+        checker.heartbeat(ComponentKey.websocket('binance'), at=now)
         unhealthy = checker.unhealthy_components(now=now + timedelta(seconds=31))
-        assert unhealthy == ['ws.binance']
+        assert unhealthy == [ComponentKey.websocket('binance')]
 
 class TestMetricsRegistry:
 
